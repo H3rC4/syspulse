@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00f0ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#a855f7;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Heart outline -->
+  <path d="M128 210 C128 210 40 150 40 90 C40 60 65 40 90 40 C105 40 120 50 128 65 C136 50 151 40 166 40 C191 40 216 60 216 90 C216 150 128 210 128 210 Z" 
+        fill="none" stroke="url(#grad)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"
+        filter="url(#glow)"/>
+  
+  <!-- EKG pulse line -->
+  <path d="M48 128 L88 128 L98 128 L108 98 L118 158 L128 108 L138 148 L148 128 L208 128" 
+        fill="none" stroke="url(#grad)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"
+        filter="url(#glow)"/>
+  
+  <!-- Small decorative dots at pulse endpoints -->
+  <circle cx="48" cy="128" r="3" fill="#00f0ff" opacity="0.8"/>
+  <circle cx="208" cy="128" r="3" fill="#a855f7" opacity="0.8"/>
+</svg>

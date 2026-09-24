@@ -1,0 +1,1704 @@
+import { Button, CheckBox, ComboBox, ListView, ScrollView, Slider, LineEdit } from "std-widgets.slint";
+
+export global Theme {
+    // Mode flag
+    in-out property <bool> is-light-mode: false;
+    
+    // Dark theme colors (default)
+    in-out property <brush> pure-black: #050508;
+    in-out property <brush> panel-bg: #0a0a0f;
+    in-out property <brush> card-bg: #12121a;
+    in-out property <brush> card-bg-hover: #1a1a25;
+    in-out property <brush> surface: #1e1e2a;
+    
+    // Light theme colors
+    in-out property <brush> pure-black-light: #ffffff;
+    in-out property <brush> panel-bg-light: #f5f5f7;
+    in-out property <brush> card-bg-light: #ffffff;
+    in-out property <brush> card-bg-hover-light: #f0f0f2;
+    in-out property <brush> surface-light: #e8e8ec;
+    
+    // Colores neón (shared)
+    in-out property <brush> neon-cyan: #00f0ff;
+    in-out property <brush> neon-cyan-dim: #00f0ff40;
+    in-out property <brush> neon-purple: #a855f7;
+    in-out property <brush> neon-purple-dim: #a855f740;
+    in-out property <brush> neon-green: #00ff9d;
+    in-out property <brush> neon-green-dim: #00ff9d40;
+    in-out property <brush> neon-orange: #ff8c00;
+    in-out property <brush> danger: #ff4d6d;
+    in-out property <brush> danger-dim: #ff4d6d40;
+    
+    // Dark text colors
+    in-out property <brush> text-primary: #f0f0f5;
+    in-out property <brush> text-secondary: #6b6b80;
+    in-out property <brush> text-tertiary: #4a4a5a;
+    
+    // Light text colors
+    in-out property <brush> text-primary-light: #1a1a2e;
+    in-out property <brush> text-secondary-light: #5a5a6e;
+    in-out property <brush> text-tertiary-light: #8a8a9a;
+    
+    // Dark border colors
+    in-out property <brush> border-color: #1e1e2a;
+    in-out property <brush> border-subtle: #15151f;
+    
+    // Light border colors
+    in-out property <brush> border-color-light: #d0d0d8;
+    in-out property <brush> border-subtle-light: #e0e0e8;
+    
+    // Dynamic colors (computed based on mode)
+    in-out property <brush> bg-main: #050508;
+    in-out property <brush> bg-panel: #0a0a0f;
+    in-out property <brush> bg-card: #12121a;
+    in-out property <brush> bg-card-hover: #1a1a25;
+    in-out property <brush> bg-surface: #1e1e2a;
+    in-out property <brush> text-main: #f0f0f5;
+    in-out property <brush> text-sub: #6b6b80;
+    in-out property <brush> text-dim: #4a4a5a;
+    in-out property <brush> border-main: #1e1e2a;
+    in-out property <brush> border-dim: #15151f;
+}
+
+export struct ProcessEventData {
+    id: int,
+    timestamp: string,
+    name: string,
+    pid: int,
+    parent-pid: int,
+    command-line: string,
+    lifetime: string,
+}
+
+export struct ProcessEntryData {
+    pid: int,
+    name: string,
+    cpu: string,
+    memory: string,
+    focused: bool,
+}
+
+export struct DuplicateFileData {
+    path: string,
+    created: string,
+    selected: bool,
+}
+
+export struct DuplicateGroupData {
+    hash: string,
+    size: string,
+    files: [DuplicateFileData],
+}
+
+export struct QuarantineEntryData {
+    original-path: string,
+    quarantine-path: string,
+    size: string,
+    quarantined-at: string,
+}
+
+export struct CoreUsageData {
+    name: string,
+    usage: float,
+}
+
+export struct DiskInfoData {
+    name: string,
+    mount-point: string,
+    total-bytes: float,
+    available-bytes: float,
+}
+
+export struct TempInfoData {
+    label: string,
+    temperature: float,
+}
+
+export struct TopProcessData {
+    name: string,
+    pid: int,
+    value: float,
+    value-text: string,
+    memory-mb: int,
+}
+
+// ── Helper components (internal, no export needed) ──
+
+component SidebarButton inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 44px;
+    background: active ? #00f0ff12 : (touch.has-hover ? #ffffff06 : transparent);
+    border-radius: 10px;
+
+    animate background { duration: 250ms; easing: ease-in-out; }
+
+    // Indicador activo (barra lateral)
+    Rectangle {
+        x: 0;
+        width: 3px;
+        height: parent.height - 16px;
+        y: 8px;
+        background: active ? Theme.neon-cyan : transparent;
+        border-radius: 2px;
+        animate background { duration: 250ms; }
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 14px;
+        alignment: start;
+
+        Text {
+            text: icon;
+            font-size: 16px;
+            color: active ? Theme.neon-cyan : (touch.has-hover ? Theme.text-primary : Theme.text-secondary);
+            animate color { duration: 250ms; }
+        }
+
+        Text {
+            text: label;
+            font-size: 13px;
+            font-weight: active ? 600 : 500;
+            letter-spacing: 0.5px;
+            color: active ? Theme.text-primary : (touch.has-hover ? Theme.text-primary : Theme.text-secondary);
+            vertical-alignment: center;
+            animate color { duration: 250ms; }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component NeonButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: true;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 38px;
+    background: primary
+        ? (touch.pressed ? #00b8c8 : (touch.has-hover ? #1af0ff : Theme.neon-cyan))
+        : (touch.pressed ? #00f0ff25 : (touch.has-hover ? #00f0ff18 : #00f0ff08));
+    border-width: primary ? 0px : 1px;
+    border-color: primary ? transparent : Theme.neon-cyan;
+    border-radius: 10px;
+    opacity: enabled ? 1.0 : 0.35;
+
+    animate background { duration: 200ms; easing: ease-in-out; }
+    animate opacity { duration: 200ms; }
+
+    Text {
+        text: root.text;
+        color: primary ? #000 : Theme.neon-cyan;
+        font-weight: 600;
+        font-size: 13px;
+        letter-spacing: 0.3px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => { if enabled { root.clicked(); } }
+    }
+}
+
+component SectionTitle inherits Text {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: Theme.text-primary;
+}
+
+component SectionDescription inherits Text {
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.2px;
+    color: Theme.text-secondary;
+    wrap: word-wrap;
+}
+
+component TabPill inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 34px;
+    background: active ? Theme.neon-purple : (touch.has-hover ? Theme.card-bg-hover : Theme.card-bg);
+    border-radius: 17px;
+    border-width: active ? 0px : 1px;
+    border-color: active ? transparent : Theme.border-color;
+
+    animate background { duration: 250ms; easing: ease-in-out; }
+    animate border-color { duration: 250ms; }
+
+    HorizontalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+
+        Text {
+            text: label;
+            color: active ? #fff : (touch.has-hover ? Theme.text-primary : Theme.text-secondary);
+            font-weight: active ? 600 : 500;
+            font-size: 12px;
+            letter-spacing: 0.4px;
+            animate color { duration: 200ms; }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component SettingRow inherits HorizontalLayout {
+    in property <string> label;
+    height: 44px;
+    spacing: 20px;
+
+    Text {
+        text: label;
+        color: Theme.text-primary;
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 0.2px;
+        width: 280px;
+        vertical-alignment: center;
+    }
+}
+
+// ── Premium Card Component ──
+component MetricCard inherits Rectangle {
+    background: Theme.card-bg;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+}
+
+// ── Tab components ──
+
+component ProcessHunterTab inherits Rectangle {
+    in property <[ProcessEventData]> events: [];
+    in-out property <int> selected-id: -1;
+    callback export-json(int);
+    callback export-csv(int);
+
+    VerticalLayout {
+        padding-left: 36px;
+        padding-right: 36px;
+        padding-top: 28px;
+        padding-bottom: 28px;
+        spacing: 20px;
+
+        VerticalLayout {
+            spacing: 6px;
+            SectionTitle { text: "Process Hunter"; }
+            SectionDescription { text: "Monitor process creation and detect transient processes. Select a process to export for AI analysis."; }
+        }
+
+        HorizontalLayout {
+            spacing: 10px;
+            NeonButton {
+                text: "Export JSON";
+                enabled: selected-id >= 0;
+                clicked => { export-json(selected-id); }
+            }
+            NeonButton {
+                text: "Export CSV";
+                primary: false;
+                enabled: selected-id >= 0;
+                clicked => { export-csv(selected-id); }
+            }
+        }
+
+        Rectangle {
+            background: Theme.card-bg;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+
+            ListView {
+                for event[index] in events: Rectangle {
+                    height: 56px;
+                    background: selected-id == event.id ? #00f0ff10 : transparent;
+                    border-radius: 10px;
+
+                    animate background { duration: 200ms; }
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 16px;
+
+                        Text { text: event.timestamp; color: Theme.text-tertiary; font-size: 11px; font-weight: 500; width: 140px; vertical-alignment: center; }
+                        Text { text: event.name; color: Theme.text-primary; font-size: 13px; font-weight: 600; width: 160px; vertical-alignment: center; }
+                        Text { text: "PID " + event.pid; color: Theme.neon-cyan; font-size: 11px; font-weight: 600; width: 80px; vertical-alignment: center; }
+                        Text { text: event.command-line; color: Theme.text-secondary; font-size: 11px; wrap: word-wrap; vertical-alignment: center; }
+                    }
+
+                    TouchArea {
+                        clicked => { selected-id = event.id; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ProgressBar inherits Rectangle {
+    in property <float> progress: 0.0;
+    in property <string> label: "";
+    
+    height: 28px;
+    background: Theme.surface;
+    border-radius: 14px;
+    
+    Rectangle {
+        width: Math.max(28px, parent.width * progress);
+        height: 100%;
+        background: Theme.neon-cyan;
+        border-radius: 14px;
+        
+        animate width { duration: 300ms; easing: ease-in-out; }
+        
+        Text {
+            text: root.label;
+            color: #000;
+            font-weight: 600;
+            font-size: 11px;
+            letter-spacing: 0.3px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component CleanerTab inherits Rectangle {
+    in property <bool> scanning: false;
+    in property <bool> paused: false;
+    in property <string> status: "";
+    in property <int> files-found: 0;
+    in property <int> total-files: 0;
+    in property <string> bytes-text: "0 B";
+    in property <float> progress: 0.0;
+    in property <[DuplicateGroupData]> duplicate-groups: [];
+    in property <[QuarantineEntryData]> quarantine-entries: [];
+    in-out property <string> folder-path: "";
+    in-out property <int> sub-tab: 0;
+    in property <string> duplicates-total-mb: "0 MB";
+    in property <string> quarantine-total-size: "0 MB";
+
+    callback scan-system-temp();
+    callback clean-system-temp();
+    callback toggle-pause();
+    callback reset-scan();
+    callback select-folder();
+    callback scan-duplicates(string);
+    callback open-file(string);
+    callback toggle-file-selection(int, int);
+    callback keep-oldest(int);
+    callback keep-newest(int);
+    callback quarantine-selected();
+    callback load-quarantine();
+    callback restore(int);
+    callback delete(int);
+
+    VerticalLayout {
+        padding-left: 36px;
+        padding-right: 36px;
+        padding-top: 28px;
+        padding-bottom: 28px;
+        spacing: 20px;
+
+        VerticalLayout {
+            spacing: 6px;
+            SectionTitle { text: "Smart Cleaner"; }
+            SectionDescription { text: "Clean temporary files and developer caches. Files are sent to the Recycle Bin."; }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            TabPill { label: "System Sweep"; active: sub-tab == 0; clicked => { sub-tab = 0; } }
+            TabPill { label: "Duplicates"; active: sub-tab == 1; clicked => { sub-tab = 1; } }
+            TabPill { label: "Quarantine"; active: sub-tab == 2; clicked => { sub-tab = 2; load-quarantine(); } }
+        }
+
+        if sub-tab == 0: VerticalLayout {
+            spacing: 16px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                NeonButton { 
+                    text: scanning && paused ? "Resume" : scanning ? "Pause" : "Scan";
+                    clicked => { 
+                        if scanning { 
+                            toggle-pause(); 
+                        } else { 
+                            scan-system-temp(); 
+                        } 
+                    } 
+                }
+                NeonButton { 
+                    text: "Clean"; 
+                    primary: false; 
+                    enabled: !scanning && files-found > 0; 
+                    clicked => { clean-system-temp(); } 
+                }
+                if scanning || files-found > 0: NeonButton {
+                    text: "Reset";
+                    primary: false;
+                    clicked => { reset-scan(); }
+                }
+            }
+
+            if scanning: ProgressBar {
+                progress: root.progress;
+                label: paused ? "Paused - " + status : status;
+            }
+
+            if total-files > 0: Text { 
+                text: "Cleaning: " + files-found + " / " + total-files + " files"; 
+                color: Theme.neon-cyan; 
+                font-size: 14px; 
+                font-weight: 700; 
+            }
+            if total-files == 0: Text { 
+                text: "Files found: " + files-found; 
+                color: Theme.text-primary; 
+                font-size: 14px; 
+            }
+            Text { text: "Reclaimable: " + bytes-text; color: Theme.neon-green; font-size: 14px; font-weight: 700; }
+        }
+
+        if sub-tab == 1: VerticalLayout {
+            spacing: 16px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                height: 40px;
+
+                Rectangle {
+                    background: Theme.card-bg;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.border-color;
+
+                    LineEdit {
+                        text <=> folder-path;
+                        placeholder-text: "Select a folder...";
+                        read-only: true;
+                        font-size: 13px;
+                    }
+                }
+
+                NeonButton { text: "Browse"; primary: false; clicked => { select-folder(); } }
+                NeonButton { text: "Scan"; enabled: folder-path != ""; clicked => { scan-duplicates(folder-path); } }
+                NeonButton { text: "Send Selected to Quarantine"; primary: false; clicked => { quarantine-selected(); } }
+            }
+
+            if duplicate-groups.length > 0 : HorizontalLayout {
+                spacing: 16px;
+                
+                Text { 
+                    text: duplicate-groups.length + " duplicate groups found"; 
+                    color: Theme.text-primary; 
+                    font-size: 14px; 
+                }
+                
+                Rectangle {
+                    width: 1px;
+                    height: 20px;
+                    background: Theme.border-color;
+                }
+                
+                Text { 
+                    text: "Total: " + duplicates-total-mb; 
+                    color: Theme.neon-cyan; 
+                    font-size: 14px; 
+                    font-weight: 700;
+                }
+            }
+
+            ScrollView {
+                VerticalLayout {
+                    spacing: 12px;
+                    padding: 8px;
+
+                    for group[group-index] in duplicate-groups: Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: Theme.border-color;
+
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+
+                            HorizontalLayout {
+                                Text { text: "Hash: " + group.hash; color: Theme.text-secondary; font-size: 11px; }
+                                Text { text: "Size: " + group.size; color: Theme.neon-cyan; font-size: 12px; font-weight: 700; }
+                            }
+
+                            for file[index] in group.files: Rectangle {
+                                height: 48px;
+                                background: file.selected ? #00ff9d10 : transparent;
+                                border-radius: 6px;
+                                
+                                HorizontalLayout {
+                                    padding: 8px;
+                                    spacing: 12px;
+                                    Rectangle {
+                                        width: 16px;
+                                        height: 16px;
+                                        background: file.selected ? Theme.neon-green : Theme.border-color;
+                                        border-radius: 4px;
+                                        
+                                        TouchArea {
+                                            clicked => { toggle-file-selection(group-index, index); }
+                                        }
+                                    }
+                                    Text { 
+                                        text: file.path; 
+                                        color: Theme.text-primary; 
+                                        font-size: 12px; 
+                                        wrap: word-wrap;
+                                        max-width: 600px;
+                                    }
+                                    Text { 
+                                        text: file.created; 
+                                        color: Theme.text-secondary; 
+                                        font-size: 11px;
+                                        width: 120px;
+                                    }
+                                    NeonButton { 
+                                        text: "Open"; 
+                                        primary: false;
+                                        width: 80px;
+                                        clicked => { open-file(file.path); } 
+                                    }
+                                }
+                            }
+                            
+                            HorizontalLayout {
+                                spacing: 8px;
+                                padding-top: 8px;
+                                NeonButton { text: "Keep Oldest"; primary: false; clicked => { keep-oldest(group-index); } }
+                                NeonButton { text: "Keep Newest"; primary: false; clicked => { keep-newest(group-index); } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if sub-tab == 2: VerticalLayout {
+            spacing: 12px;
+
+            HorizontalLayout {
+                spacing: 16px;
+                NeonButton { text: "Refresh"; primary: false; clicked => { load-quarantine(); } }
+                
+                if quarantine-entries.length > 0 : Text {
+                    text: quarantine-entries.length + " files in quarantine (" + quarantine-total-size + ")";
+                    color: Theme.text-primary;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+            }
+
+            ScrollView {
+                VerticalLayout {
+                    spacing: 12px;
+                    padding: 8px;
+
+                    for entry[index] in quarantine-entries: Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: Theme.border-color;
+                        height: 80px;
+
+                        HorizontalLayout {
+                            padding: 12px;
+                            spacing: 12px;
+
+                            VerticalLayout {
+                                Text { text: entry.original-path; color: Theme.text-primary; font-size: 12px; wrap: word-wrap; }
+                                Text { text: entry.size + " \u{2022} " + entry.quarantined-at; color: Theme.text-secondary; font-size: 11px; }
+                            }
+
+                            NeonButton { text: "Open"; primary: false; clicked => { open-file(entry.quarantine-path); } }
+                            NeonButton { text: "Restore"; primary: false; clicked => { restore(index); } }
+                            NeonButton { text: "Delete"; primary: false; clicked => { delete(index); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component CpuFocusTab inherits Rectangle {
+    in property <[ProcessEntryData]> entries: [];
+    callback refresh();
+    callback toggle(int);
+
+    VerticalLayout {
+        padding-left: 36px;
+        padding-right: 36px;
+        padding-top: 28px;
+        padding-bottom: 28px;
+        spacing: 20px;
+
+        VerticalLayout {
+            spacing: 6px;
+            SectionTitle { text: "CPU Focus"; }
+            SectionDescription { text: "Select a process to raise its priority and improve responsiveness."; }
+        }
+
+        NeonButton { text: "Refresh"; clicked => { refresh(); } }
+
+        Rectangle {
+            background: Theme.card-bg;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+
+            ListView {
+                for entry[index] in entries: Rectangle {
+                    height: 56px;
+                    background: entry.focused ? #a855f710 : transparent;
+                    border-radius: 10px;
+                    
+                    animate background { duration: 200ms; }
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 16px;
+
+                        Text { text: entry.name; color: Theme.text-primary; font-size: 13px; font-weight: 600; width: 200px; vertical-alignment: center; }
+                        Text { text: entry.cpu; color: Theme.neon-cyan; font-size: 12px; font-weight: 600; width: 100px; vertical-alignment: center; }
+                        Text { text: entry.memory; color: Theme.text-secondary; font-size: 12px; width: 120px; vertical-alignment: center; }
+
+                        NeonButton {
+                            text: entry.focused ? "Unfocus" : "Focus";
+                            primary: !entry.focused;
+                            clicked => { toggle(entry.pid); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component SettingsTab inherits Rectangle {
+    in-out property <int> language-index: 0;
+    in-out property <bool> dark-mode: true;
+    in-out property <bool> start-with-os: false;
+    in-out property <float> history-days: 30;
+    in-out property <float> quarantine-days: 7;
+    in-out property <bool> permanent-delete: false;  // NUEVO
+    in property <string> version: "0.1.0";
+    callback save();
+    callback check-updates();
+
+    VerticalLayout {
+        padding-left: 36px;
+        padding-right: 36px;
+        padding-top: 28px;
+        padding-bottom: 28px;
+        spacing: 24px;
+
+        VerticalLayout {
+            spacing: 6px;
+            SectionTitle { text: "Settings"; }
+            SectionDescription { text: "Configure language, theme, and system preferences."; }
+        }
+
+        // Settings card
+        Rectangle {
+            background: Theme.card-bg;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+
+            VerticalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 4px;
+
+                SettingRow {
+                    label: "Language";
+                    ComboBox {
+                        model: ["English", "Espa\u{00F1}ol (Argentina)"];
+                        current-index <=> language-index;
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                SettingRow {
+                    label: "Dark mode";
+                    CheckBox { checked <=> dark-mode; }
+                }
+
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                SettingRow {
+                    label: "Start with operating system";
+                    CheckBox { checked <=> start-with-os; }
+                }
+
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                SettingRow {
+                    label: "Process history retention (days)";
+                    Slider { value <=> history-days; minimum: 1; maximum: 365; }
+                }
+
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                SettingRow {
+                    label: "Quarantine retention (days)";
+                    Slider { value <=> quarantine-days; minimum: 1; maximum: 90; }
+                }
+
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                SettingRow {
+                    label: "Eliminar permanentemente (sin papelera)";
+                    CheckBox { checked <=> permanent-delete; }
+                }
+
+                Text {
+                    text: "\u{26A0} Los archivos se eliminan directo sin pasar por la papelera. Irreversible.";
+                    color: Theme.neon-orange;
+                    font-size: 11px;
+                    font-weight: 500;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            NeonButton { text: "Apply & Restart"; clicked => { save(); } }
+            NeonButton { text: "Check for updates"; primary: false; clicked => { check-updates(); } }
+        }
+
+        Text { text: "\u{26A0} App will restart to apply language change"; color: Theme.neon-orange; font-size: 11px; font-weight: 500; }
+        Text { text: "Version " + version; color: Theme.text-tertiary; font-size: 11px; }
+    }
+}
+
+component SystemMonitorTab inherits Rectangle {
+    in property <float> cpu-usage: 0.0;
+    in property <[CoreUsageData]> cores: [];
+    in property <float> total-memory: 0.0;
+    in property <float> used-memory: 0.0;
+    in property <float> total-swap: 0.0;
+    in property <float> used-swap: 0.0;
+    in property <float> load-avg-1: 0.0;
+    in property <float> load-avg-5: 0.0;
+    in property <float> load-avg-15: 0.0;
+    in property <[DiskInfoData]> disks: [];
+    in property <float> network-up: 0.0;
+    in property <float> network-down: 0.0;
+    in property <[TempInfoData]> temperatures: [];
+    in property <float> uptime: 0.0;
+    in property <[TopProcessData]> top-cpu: [];
+    in property <[TopProcessData]> top-ram: [];
+    in property <string> load-avg-text: "0.00 / 0.00 / 0.00";
+
+    VerticalLayout {
+        padding-left: 36px;
+        padding-right: 36px;
+        padding-top: 28px;
+        padding-bottom: 28px;
+        spacing: 24px;
+
+        // Header
+        VerticalLayout {
+            spacing: 6px;
+            SectionTitle { text: "System Monitor"; }
+            SectionDescription { text: "Real-time performance metrics"; }
+        }
+
+        ScrollView {
+            VerticalLayout {
+                spacing: 16px;
+
+                // ── Row 1: CPU, RAM, SWAP ──
+                HorizontalLayout {
+                    spacing: 14px;
+
+                    // CPU Card
+                    Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 14px;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: Theme.neon-cyan-dim;
+                                    Text {
+                                        text: "\u{26A1}";
+                                        font-size: 16px;
+                                        color: Theme.neon-cyan;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    Text { text: "CPU Usage"; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-secondary; }
+                                    Text {
+                                        text: Math.round(root.cpu-usage) + "%";
+                                        font-size: 28px;
+                                        font-weight: 700;
+                                        color: Theme.text-primary;
+                                    }
+                                }
+                            }
+
+                            ProgressBar {
+                                progress: root.cpu-usage / 100.0;
+                                label: "";
+                            }
+                        }
+                    }
+
+                    // RAM Card
+                    Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 14px;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: Theme.neon-purple-dim;
+                                    Text {
+                                        text: "\u{25A8}";
+                                        font-size: 16px;
+                                        color: Theme.neon-purple;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    Text { text: "MEMORY"; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-secondary; }
+                                    Text {
+                                        text: root.total-memory > 0.0 ? Math.round(root.used-memory / 1024 / 1024) + " / " + Math.round(root.total-memory / 1024 / 1024) + " MB" : "N/A";
+                                        font-size: 20px;
+                                        font-weight: 700;
+                                        color: Theme.text-primary;
+                                    }
+                                }
+                            }
+
+                            ProgressBar {
+                                progress: root.total-memory > 0.0 ? root.used-memory / root.total-memory : 0.0;
+                                label: "";
+                            }
+                        }
+                    }
+
+                    // SWAP Card
+                    Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 14px;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: Theme.neon-green-dim;
+                                    Text {
+                                        text: "\u{21C4}";
+                                        font-size: 16px;
+                                        color: Theme.neon-green;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    Text { text: "SWAP"; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-secondary; }
+                                    Text {
+                                        text: root.total-swap > 0.0 ? Math.round(root.used-swap / 1024 / 1024) + " / " + Math.round(root.total-swap / 1024 / 1024) + " MB" : "N/A";
+                                        font-size: 20px;
+                                        font-weight: 700;
+                                        color: Theme.text-primary;
+                                    }
+                                }
+                            }
+
+                            ProgressBar {
+                                progress: root.total-swap > 0.0 ? root.used-swap / root.total-swap : 0.0;
+                                label: "";
+                            }
+                        }
+                    }
+                }
+
+                // ── Row 2: Disks + Network ──
+                HorizontalLayout {
+                    spacing: 14px;
+
+                    // Disks Card
+                    Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 14px;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: Theme.neon-cyan-dim;
+                                    Text {
+                                        text: "\u{26C1}";
+                                        font-size: 16px;
+                                        color: Theme.neon-cyan;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text { text: "STORAGE"; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-secondary; vertical-alignment: center; }
+                            }
+
+                            for disk[index] in root.disks : VerticalLayout {
+                                spacing: 6px;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: disk.name != "" ? disk.name : disk.mount-point;
+                                        font-size: 12px;
+                                        font-weight: 600;
+                                        color: Theme.text-primary;
+                                    }
+                                    Text {
+                                        text: Math.round(disk.available-bytes / 1024 / 1024 / 1024) + " GB free / " + Math.round(disk.total-bytes / 1024 / 1024 / 1024) + " GB";
+                                        font-size: 11px;
+                                        color: Theme.text-secondary;
+                                    }
+                                }
+                                ProgressBar {
+                                    progress: disk.total-bytes > 0.0 ? (disk.total-bytes - disk.available-bytes) / disk.total-bytes : 0.0;
+                                    label: "";
+                                }
+                            }
+                        }
+                    }
+
+                    // Network Card
+                    Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 14px;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: Theme.neon-purple-dim;
+                                    Text {
+                                        text: "\u{21C5}";
+                                        font-size: 16px;
+                                        color: Theme.neon-purple;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text { text: "NETWORK"; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-secondary; vertical-alignment: center; }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 20px;
+
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    Text { text: "\u{2191} UPLOAD"; font-size: 10px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-tertiary; }
+                                    Text {
+                                        text: root.network-up > 1024.0 ? Math.round(root.network-up / 1024) + " KB/s" : Math.round(root.network-up) + " B/s";
+                                        font-size: 18px;
+                                        font-weight: 700;
+                                        color: Theme.neon-green;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    Text { text: "\u{2193} DOWNLOAD"; font-size: 10px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-tertiary; }
+                                    Text {
+                                        text: root.network-down > 1024.0 ? Math.round(root.network-down / 1024) + " KB/s" : Math.round(root.network-down) + " B/s";
+                                        font-size: 18px;
+                                        font-weight: 700;
+                                        color: Theme.neon-cyan;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Row 3: Temps + Uptime/Load ──
+                HorizontalLayout {
+                    spacing: 14px;
+
+                    // Temperatures Card
+                    Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 14px;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: Theme.danger-dim;
+                                    Text {
+                                        text: "\u{2668}";
+                                        font-size: 16px;
+                                        color: Theme.danger;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text { text: "TEMPERATURES"; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-secondary; vertical-alignment: center; }
+                            }
+
+                            for temp[index] in root.temperatures : HorizontalLayout {
+                                spacing: 12px;
+
+                                Text {
+                                    text: temp.label;
+                                    font-size: 12px;
+                                    color: Theme.text-primary;
+                                    preferred-width: 120px;
+                                }
+
+                                Text {
+                                    text: Math.round(temp.temperature) + "\u{00B0}C";
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                    color: temp.temperature > 80.0 ? Theme.danger : Theme.neon-green;
+                                }
+                            }
+
+                            if root.temperatures.length == 0 : Text {
+                                text: "No sensors detected";
+                                font-size: 12px;
+                                color: Theme.text-tertiary;
+                            }
+                        }
+                    }
+
+                    // System Info Card
+                    Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 14px;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: Theme.neon-cyan-dim;
+                                    Text {
+                                        text: "\u{2139}";
+                                        font-size: 16px;
+                                        color: Theme.neon-cyan;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text { text: "SYSTEM INFO"; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-secondary; vertical-alignment: center; }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 24px;
+
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    Text { text: "UPTIME"; font-size: 10px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-tertiary; }
+                                    Text {
+                                        text: {
+                                            let uptime_int = Math.floor(root.uptime);
+                                            let days = Math.floor(uptime_int / 86400);
+                                            let hours = Math.floor(Math.mod(uptime_int, 86400) / 3600);
+                                            let mins = Math.floor(Math.mod(uptime_int, 3600) / 60);
+                                            return days + "d " + hours + "h " + mins + "m";
+                                        };
+                                        font-size: 18px;
+                                        font-weight: 700;
+                                        color: Theme.text-primary;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    Text { text: "LOAD AVERAGE"; font-size: 10px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-tertiary; }
+                                    Text {
+                                        text: root.load-avg-text;
+                                        font-size: 16px;
+                                        font-weight: 600;
+                                        color: Theme.text-primary;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Row 4: Top Processes ──
+                HorizontalLayout {
+                    spacing: 14px;
+
+                    // Top CPU
+                    Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 10px;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: Theme.neon-cyan-dim;
+                                    Text {
+                                        text: "\u{26A1}";
+                                        font-size: 16px;
+                                        color: Theme.neon-cyan;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text { text: "TOP PROCESSES BY CPU"; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-secondary; vertical-alignment: center; }
+                            }
+
+                            for proc[index] in root.top-cpu : Rectangle {
+                                height: 32px;
+                                background: Theme.surface;
+                                border-radius: 8px;
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+
+                                    Text {
+                                        text: (index + 1) + ".";
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        color: Theme.text-tertiary;
+                                        preferred-width: 18px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Text {
+                                        text: proc.name;
+                                        font-size: 12px;
+                                        font-weight: 500;
+                                        color: Theme.text-primary;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Rectangle { }
+
+                                    Text {
+                                        text: proc.value-text + "%";
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        color: Theme.neon-cyan;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Top RAM
+                    Rectangle {
+                        background: Theme.card-bg;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 10px;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: Theme.neon-purple-dim;
+                                    Text {
+                                        text: "\u{25A8}";
+                                        font-size: 16px;
+                                        color: Theme.neon-purple;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text { text: "TOP PROCESSES BY MEMORY"; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; color: Theme.text-secondary; vertical-alignment: center; }
+                            }
+
+                            for proc[index] in root.top-ram : Rectangle {
+                                height: 32px;
+                                background: Theme.surface;
+                                border-radius: 8px;
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+
+                                    Text {
+                                        text: (index + 1) + ".";
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        color: Theme.text-tertiary;
+                                        preferred-width: 18px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Text {
+                                        text: proc.name;
+                                        font-size: 12px;
+                                        font-weight: 500;
+                                        color: Theme.text-primary;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Rectangle { }
+
+                                    Text {
+                                        text: proc.memory-mb + " MB";
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        color: Theme.neon-purple;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── AppWindow (LA UNICA exportada, hereda Window) ─
+
+export component AppWindow inherits Window {
+    title: "SysPulse";
+    preferred-width: 1100px;
+    preferred-height: 720px;
+    min-width: 900px;
+    min-height: 600px;
+    background: Theme.pure-black;
+
+    in-out property <int> current-tab: 0;
+    in property <string> status-text: "Ready";
+    in property <string> app-version: "0.1.0";
+    callback tab-changed(int);
+
+    in property <[ProcessEventData]> process-events: [];
+    in-out property <int> selected-process-id: -1;
+    callback scan-processes();
+    callback export-process(int, string);
+
+    in property <bool> cleaner-scanning: false;
+    in property <bool> cleaner-paused: false;
+    in property <string> cleaner-status: "";
+    in property <int> cleaner-files-found: 0;
+    in property <int> cleaner-total-files: 0;
+    in property <string> cleaner-bytes-text: "0 B";
+    in property <float> cleaner-progress: 0.0;
+    in property <[DuplicateGroupData]> duplicate-groups: [];
+    in property <[QuarantineEntryData]> quarantine-entries: [];
+    in-out property <string> duplicate-folder-path: "";
+    in-out property <int> cleaner-sub-tab: 0;
+    in property <string> duplicates-total-mb: "0 MB";
+    in property <string> quarantine-total-size: "0 MB";
+    callback scan-system-temp();
+    callback clean-system-temp();
+    callback toggle-pause();
+    callback reset-scan();
+    callback select-folder();
+    callback scan-duplicates(string);
+    callback open-file(string);
+    callback toggle-file-selection(int, int);
+    callback keep-oldest(int);
+    callback keep-newest(int);
+    callback quarantine-selected-duplicates();
+    callback load-quarantine();
+    callback restore-quarantine(int);
+    callback delete-quarantine(int);
+
+    in property <[ProcessEntryData]> process-entries: [];
+    callback refresh-processes();
+    callback toggle-focus(int);
+
+    in-out property <int> language-index: 0;
+    in-out property <bool> dark-mode: true;
+    in-out property <bool> start-with-os: false;
+    in-out property <float> history-days: 30;
+    in-out property <float> quarantine-days: 7;
+    callback save-settings();
+    callback check-updates();
+
+    // ── System Monitor properties ──
+    in property <float> sys-cpu-usage: 0.0;
+    in property <[CoreUsageData]> sys-cores: [];
+    in property <float> sys-total-memory: 0.0;
+    in property <float> sys-used-memory: 0.0;
+    in property <float> sys-total-swap: 0.0;
+    in property <float> sys-used-swap: 0.0;
+    in property <float> sys-load-avg-1: 0.0;
+    in property <float> sys-load-avg-5: 0.0;
+    in property <float> sys-load-avg-15: 0.0;
+    in property <[DiskInfoData]> sys-disks: [];
+    in property <float> sys-network-up: 0.0;
+    in property <float> sys-network-down: 0.0;
+    in property <[TempInfoData]> sys-temperatures: [];
+    in property <float> sys-uptime: 0.0;
+    in property <[TopProcessData]> sys-top-cpu: [];
+    in property <[TopProcessData]> sys-top-ram: [];
+    in property <string> sys-load-avg-text: "0.00 / 0.00 / 0.00";
+    callback refresh-sys-stats();
+
+    HorizontalLayout {
+        // ── Sidebar ──
+        Rectangle {
+            width: 240px;
+            background: Theme.panel-bg;
+
+            VerticalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 28px;
+                padding-bottom: 20px;
+                spacing: 6px;
+
+                // Logo
+                VerticalLayout {
+                    padding-bottom: 28px;
+                    spacing: 4px;
+                    
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: start;
+                        
+                        // Logo icon
+                        Rectangle {
+                            width: 36px;
+                            height: 36px;
+                            border-radius: 10px;
+                            background: #00f0ff15;
+                            
+                            Text {
+                                text: "\u{2661}";
+                                font-size: 18px;
+                                color: Theme.neon-cyan;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        
+                        VerticalLayout {
+                            alignment: start;
+                            Text {
+                                text: "SysPulse";
+                                font-size: 20px;
+                                font-weight: 700;
+                                letter-spacing: 1px;
+                                color: Theme.text-primary;
+                            }
+                            Text {
+                                text: "v" + root.app-version;
+                                font-size: 10px;
+                                font-weight: 500;
+                                letter-spacing: 0.5px;
+                                color: Theme.text-tertiary;
+                            }
+                        }
+                    }
+                }
+
+                // Separator
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border-subtle;
+                }
+                
+                Rectangle { height: 12px; }
+
+                // Section label
+                Text {
+                    text: "NAVIGATION";
+                    font-size: 10px;
+                    font-weight: 600;
+                    letter-spacing: 1.5px;
+                    color: Theme.text-tertiary;
+                    padding-left: 16px;
+                }
+                
+                Rectangle { height: 4px; }
+
+                SidebarButton {
+                    label: "Monitor";
+                    icon: "\u{25A0}";
+                    active: root.current-tab == 0;
+                    clicked => { root.current-tab = 0; root.tab-changed(0); }
+                }
+
+                SidebarButton {
+                    label: "Process Hunter";
+                    icon: "\u{25CE}";
+                    active: root.current-tab == 1;
+                    clicked => { root.current-tab = 1; root.tab-changed(1); }
+                }
+
+                SidebarButton {
+                    label: "Cleaner";
+                    icon: "\u{2726}";
+                    active: root.current-tab == 2;
+                    clicked => { root.current-tab = 2; root.tab-changed(2); }
+                }
+
+                SidebarButton {
+                    label: "CPU Focus";
+                    icon: "\u{25B2}";
+                    active: root.current-tab == 3;
+                    clicked => { root.current-tab = 3; root.tab-changed(3); }
+                }
+
+                Rectangle { height: 8px; }
+                
+                // Separator
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border-subtle;
+                }
+                
+                Rectangle { height: 8px; }
+                
+                // Section label
+                Text {
+                    text: "SYSTEM";
+                    font-size: 10px;
+                    font-weight: 600;
+                    letter-spacing: 1.5px;
+                    color: Theme.text-tertiary;
+                    padding-left: 16px;
+                }
+                
+                Rectangle { height: 4px; }
+
+                SidebarButton {
+                    label: "Settings";
+                    icon: "\u{2699}";
+                    active: root.current-tab == 4;
+                    clicked => { root.current-tab = 4; root.tab-changed(4); }
+                }
+
+                Rectangle { }
+
+                // Status bar at bottom
+                Rectangle {
+                    height: 40px;
+                    background: Theme.surface;
+                    border-radius: 10px;
+                    
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 8px;
+                        
+                        Rectangle {
+                            width: 6px;
+                            height: 6px;
+                            border-radius: 3px;
+                            background: Theme.neon-green;
+                        }
+                        
+                        Text {
+                            text: root.status-text;
+                            font-size: 11px;
+                            font-weight: 500;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Separator ──
+        Rectangle {
+            width: 1px;
+            background: Theme.border-subtle;
+        }
+
+        // ── Main Content ──
+        Rectangle {
+            background: Theme.pure-black;
+
+            if root.current-tab == 0: SystemMonitorTab {
+                cpu-usage: root.sys-cpu-usage;
+                cores: root.sys-cores;
+                total-memory: root.sys-total-memory;
+                used-memory: root.sys-used-memory;
+                total-swap: root.sys-total-swap;
+                used-swap: root.sys-used-swap;
+                load-avg-1: root.sys-load-avg-1;
+                load-avg-5: root.sys-load-avg-5;
+                load-avg-15: root.sys-load-avg-15;
+                disks: root.sys-disks;
+                network-up: root.sys-network-up;
+                network-down: root.sys-network-down;
+                temperatures: root.sys-temperatures;
+                uptime: root.sys-uptime;
+                top-cpu: root.sys-top-cpu;
+                top-ram: root.sys-top-ram;
+                load-avg-text: root.sys-load-avg-text;
+            }
+
+            if root.current-tab == 1: ProcessHunterTab {
+                events: root.process-events;
+                selected-id <=> root.selected-process-id;
+                export-json(id) => { root.export-process(id, "json"); }
+                export-csv(id) => { root.export-process(id, "csv"); }
+            }
+
+            if root.current-tab == 2: CleanerTab {
+                scanning: root.cleaner-scanning;
+                paused: root.cleaner-paused;
+                status: root.cleaner-status;
+                files-found: root.cleaner-files-found;
+                total-files: root.cleaner-total-files;
+                bytes-text: root.cleaner-bytes-text;
+                progress: root.cleaner-progress;
+                duplicate-groups: root.duplicate-groups;
+                quarantine-entries: root.quarantine-entries;
+                folder-path <=> root.duplicate-folder-path;
+                sub-tab <=> root.cleaner-sub-tab;
+                duplicates-total-mb: root.duplicates-total-mb;
+                quarantine-total-size: root.quarantine-total-size;
+                scan-system-temp => { root.scan-system-temp(); }
+                clean-system-temp => { root.clean-system-temp(); }
+                toggle-pause => { root.toggle-pause(); }
+                reset-scan => { root.reset-scan(); }
+                select-folder => { root.select-folder(); }
+                scan-duplicates(path) => { root.scan-duplicates(path); }
+                open-file(path) => { root.open-file(path); }
+                toggle-file-selection(group_idx, file_idx) => { root.toggle-file-selection(group_idx, file_idx); }
+                keep-oldest(index) => { root.keep-oldest(index); }
+                keep-newest(index) => { root.keep-newest(index); }
+                quarantine-selected => { root.quarantine-selected-duplicates(); }
+                load-quarantine => { root.load-quarantine(); }
+                restore(index) => { root.restore-quarantine(index); }
+                delete(index) => { root.delete-quarantine(index); }
+            }
+
+            if root.current-tab == 3: CpuFocusTab {
+                entries: root.process-entries;
+                refresh => { root.refresh-processes(); }
+                toggle(pid) => { root.toggle-focus(pid); }
+            }
+
+            if root.current-tab == 4: SettingsTab {
+                language-index <=> root.language-index;
+                dark-mode <=> root.dark-mode;
+                start-with-os <=> root.start-with-os;
+                history-days <=> root.history-days;
+                quarantine-days <=> root.quarantine-days;
+                version: root.app-version;
+                save => { root.save-settings(); }
+                check-updates => { root.check-updates(); }
+            }
+        }
+    }
+}
