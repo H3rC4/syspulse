@@ -244,33 +244,28 @@ impl Cleaner {
 
                             // Eliminar según configuración: directo o papelera
                             let path_clone = file_path.clone();
-                            let delete_result = if permanent_delete {
+                            let delete_result: Result<(), String> = if permanent_delete {
                                 // Eliminación directa - sin papelera, instantáneo
                                 tokio::task::spawn_blocking(move || {
-                                    std::fs::remove_file(&path_clone)
-                                }).await
+                                    std::fs::remove_file(&path_clone).map_err(|e| e.to_string())
+                                }).await.map_err(|e| e.to_string()).and_then(|r| r)
                             } else {
                                 // A papelera (comportamiento original)
                                 tokio::task::spawn_blocking(move || {
-                                    trash::delete(&path_clone)
-                                }).await
+                                    trash::delete(&path_clone).map_err(|e| e.to_string())
+                                }).await.map_err(|e| e.to_string()).and_then(|r| r)
                             };
 
                             match delete_result {
-                                Ok(Ok(_)) => {
+                                Ok(_) => {
                                     result.files_found += 1;
                                     moved_bytes += size;
                                     result.bytes_reclaimable = moved_bytes;
                                     progress_callback(result.files_found, moved_bytes);
                                     tracing::debug!("Deleted: {:?}", file_path);
                                 }
-                                Ok(Err(e)) => {
-                                    let error_msg = format!("{}: {}", file_path.display(), e);
-                                    tracing::warn!("Failed to delete: {}", error_msg);
-                                    result.errors.push(error_msg);
-                                }
                                 Err(e) => {
-                                    let error_msg = format!("{}: spawn_blocking failed: {}", file_path.display(), e);
+                                    let error_msg = format!("{}: {}", file_path.display(), e);
                                     tracing::warn!("Failed to delete: {}", error_msg);
                                     result.errors.push(error_msg);
                                 }
@@ -298,30 +293,25 @@ impl Cleaner {
                     }
 
                     let path_clone = file_path.clone();
-                    let delete_result = if permanent_delete {
+                    let delete_result: Result<(), String> = if permanent_delete {
                         tokio::task::spawn_blocking(move || {
-                            std::fs::remove_file(&path_clone)
-                        }).await
+                            std::fs::remove_file(&path_clone).map_err(|e| e.to_string())
+                        }).await.map_err(|e| e.to_string()).and_then(|r| r)
                     } else {
                         tokio::task::spawn_blocking(move || {
-                            trash::delete(&path_clone)
-                        }).await
+                            trash::delete(&path_clone).map_err(|e| e.to_string())
+                        }).await.map_err(|e| e.to_string()).and_then(|r| r)
                     };
 
                     match delete_result {
-                        Ok(Ok(_)) => {
+                        Ok(_) => {
                             result.files_found += 1;
                             moved_bytes += size;
                             result.bytes_reclaimable = moved_bytes;
                             progress_callback(result.files_found, moved_bytes);
                         }
-                        Ok(Err(e)) => {
-                            let error_msg = format!("{}: {}", file_path.display(), e);
-                            tracing::warn!("Failed to delete: {}", error_msg);
-                            result.errors.push(error_msg);
-                        }
                         Err(e) => {
-                            let error_msg = format!("{}: spawn_blocking failed: {}", file_path.display(), e);
+                            let error_msg = format!("{}: {}", file_path.display(), e);
                             tracing::warn!("Failed to delete: {}", error_msg);
                             result.errors.push(error_msg);
                         }

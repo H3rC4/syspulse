@@ -1,11 +1,11 @@
 # SysPulse - Plan de Implementación
 
-## Estado Actual (11 de julio de 2026)
+## Estado Actual (25 de septiembre de 2026)
 
 ### ✅ Completado
 
 #### Funcionalidades Core
-- Visual Studio Community 2026 instalado
+- Visual Studio Community 2022 instalado (con C++ desktop workload)
 - Rust instalado y configurado
 - **Proyecto compila exitosamente** (`cargo build --release`)
 - Aplicación se ejecuta sin crashes
@@ -78,14 +78,30 @@
   - Hover y click en SidebarButton, NeonButton, TabPill
   - Transiciones suaves de 200-250ms
 - ✅ **Descripciones en todas las pestañas**
-- ✅ **Traducciones i18n completadas** (19 claves nuevas EN + ES-AR)
+- ✅ **Traducciones i18n completadas** (98 claves EN + ES-AR)
+
+#### Nuevas Funcionalidades (25 de septiembre)
+- ✅ **Toggle "Eliminar permanentemente"** - Opción para omitir Papelera (envía directo a `std::fs::remove_file`)
+  - `config.rs`: Agregado `permanent_delete: bool` + `light_mode: bool` (default: false)
+  - `cleaner.rs`: Lógica condicional unificando tipos de error (`String`)
+  - `app.slint`: CheckBox en SettingsTab + advertencia naranja + checkbox "Light mode"
+  - `main.rs`: Persistencia + paso al cleaner + fix move `ui_weak`
+- ✅ **Instalador Inno Setup** - Script `installer.iss` con:
+  - Check de actualizaciones automático (GitHub API al iniciar wizard)
+  - Multi-idioma (English/Spanish)
+  - Tareas opcionales: icono escritorio, iniciar con Windows
+  - Desinstalador funcional
+- ✅ **README.md en español** - Documentación completa traducida
+- ✅ **Git + GitHub** - Repo público: https://github.com/H3rC4/syspulse
+  - Push completado con historial limpio
+  - Tags preparados para releases
 
 ### ⚠️ Pendiente
-- Tema claro completo con toggle
-- Convertir icono SVG a ICO para Windows
-- Instalador con Inno Setup
-- Publicar en GitHub
+- Icono ICO para Windows (convertir SVG)
+- LICENSE (MIT)
+- Release v0.3.0 en GitHub con instalador
 - CI/CD con GitHub Actions
+- Tema claro completo (requiere refactor Theme - limitación Slint runtime)
 
 ---
 
@@ -105,6 +121,13 @@
 - UI se congelaba post-cuarentena → agregar actualización de UI
 - `format_bytes` sin prefijo → `modules::cleaner::format_bytes`
 
+### Errores de Compilación Rust (25 de septiembre)
+- `if/else` tipos incompatibles: `std::io::Error` vs `trash::Error` → unificar a `Result<(), String>`
+- `Color` vs `color` en Slint callbacks → usar minúscula
+- `ui_weak` move error en closures múltiples → clonar antes de primer uso
+- Orden argumentos `clean_system_temp`: closure primero, `permanent_delete` último
+- `apply_theme` runtime no soportado bien en Slint → removido, solo dark-mode property
+
 ---
 
 ## Comandos de Desarrollo
@@ -122,6 +145,14 @@ $env:RUST_LOG="debug"; .\target\release\syspulse.exe
 
 # Con logs trace (muy detallado)
 $env:RUST_LOG="trace"; .\target\release\syspulse.exe
+```
+
+### Instalador
+```powershell
+# Compilar instalador (requiere Inno Setup 7)
+& "C:\Program Files\Inno Setup 7\ISCC.exe" installer.iss
+
+# Resultado: output\SysPulse-Setup-0.3.0.exe
 ```
 
 ### Otros
@@ -145,41 +176,47 @@ cargo check
 
 ```
 D:\proyectos\SysPulse\
-├── Cargo.toml              # Dependencias
-├── build.rs                # Compilador Slint
+├── Cargo.toml              # v0.3.0, repo URL correcta
+├── build.rs                # Compilador Slint + winres
 ├── .gitignore
+├── installer.iss           # NUEVO: Inno Setup script
 ├── assets/
-│   └── icon.svg           # Icono vectorial (corazón + EKG)
+│   ├── icon.svg           # Icono vectorial (corazón + EKG)
+│   └── icon.ico           # (PENDIENTE: crear multi-res)
 ├── ui/
-│   └── app.slint          # Interfaz premium (1657 líneas)
+│   └── app.slint          # Interfaz premium (~1710 líneas)
 ├── locales/
 │   ├── en/main.ftl        # Inglés (98 claves)
 │   └── es-AR/main.ftl     # Español Argentina (98 claves)
 ├── src/
-│   ├── main.rs            # Entry point + callbacks + timer (1179 líneas)
-│   ├── models.rs          # Modelos + SystemStats (140 líneas)
+│   ├── main.rs            # Entry point + callbacks + timers (~1190 líneas)
+│   ├── models.rs          # Modelos + SystemStats
 │   └── modules/
 │       ├── mod.rs
-│       ├── i18n.rs        # Internacionalización
-│       ├── config.rs      # Configuración y autostart
-│       ├── process_hunter.rs  # Monitor de procesos
-│       ├── cleaner.rs     # Limpieza y duplicados
+│       ├── i18n.rs        # Internacionalización (fluent-rs)
+│       ├── config.rs      # Configuración + autostart + permanent_delete + light_mode
+│       ├── process_hunter.rs  # Monitor procesos + SQLite
+│       ├── cleaner.rs     # Limpieza + duplicados + cuarentena (~738 líneas)
 │       ├── cpu_optimizer.rs   # Optimizador CPU
-│       ├── sys_monitor.rs # Monitor del sistema (172 líneas)
-│       └── tray.rs        # System tray
-└── planes/
-    ├── plan-de-implementacion.md       # Este archivo
-    ├── instrucciones-seguir.md         # Instrucciones para continuar
-    └── plan-mejoras-ui-ux-v0.2.0.md   # Plan de mejoras UI/UX
+│       ├── sys_monitor.rs # Monitor sistema (sysinfo 0.30)
+│       └── tray.rs        # System tray (tao + tray-icon)
+├── planes/
+│   ├── plan-de-implementacion.md       # Este archivo
+│   ├── plan-continuacion.md            # Plan siguiente sesión
+│   ├── instrucciones-seguir.md         # Instrucciones detalladas
+│   └── plan-mejoras-ui-ux-v0.2.0.md   # Plan mejoras UI/UX v0.3.0
+└── target/release/         # (tras build)
+    ├── syspulse.exe
+    └── syspulse.pdb
 ```
 
 ---
 
 ## Funcionalidades Implementadas
 
-### 1. System Monitor ✅ (NUEVO)
+### 1. System Monitor ✅
 - Dashboard en tiempo real con auto-refresh cada 2 segundos
-- CPU usage global con barra de progreso
+- CPU usage global con barra de progreso + por core
 - RAM y SWAP con indicadores visuales
 - Discos con espacio libre/total y progress bars
 - Network throughput (upload/download en KB/s)
@@ -200,11 +237,11 @@ D:\proyectos\SysPulse\
 - Buscador de duplicados (SHA-256)
 - Cuarentena propia para duplicados (con manifest JSON)
 - Restauración desde cuarentena
-- Eliminación permanente a papelera
+- Eliminación permanente a papelera / directa (toggle)
 - Botón Clean, Pause/Resume, Reset funcionales
 - Procesamiento por lotes (no satura RAM)
 - Barra de progreso visual
-- **Total en MB de duplicados** (NUEVO)
+- **Total en MB de duplicados**
 
 ### 4. Duplicates ✅
 - File picker nativo (botón Browse)
@@ -212,7 +249,7 @@ D:\proyectos\SysPulse\
 - Botón Open para verificar archivos
 - Botones Keep Oldest/Newest
 - Botón "Send Selected to Quarantine"
-- **Muestra total en MB de duplicados** (NUEVO)
+- **Muestra total en MB de duplicados**
 
 ### 5. CPU Focus ✅
 - Lista de procesos activos
@@ -220,11 +257,14 @@ D:\proyectos\SysPulse\
 - Restauración de prioridad original
 
 ### 6. Settings ✅
-- Cambio de idioma (Inglés / Español Argentina)
-- Modo oscuro (hardcoded)
+- Cambio de idioma (Inglés / Español Argentina) - requiere restart
+- Modo oscuro (property `dark-mode`)
+- Light mode property (`light-mode`) - UI only, real theme switch WIP
 - Inicio con el sistema operativo
 - Retención de historial y cuarentena configurable
-- Botón "Apply & Restart" funcional (con logs de debug)
+- **Toggle "Eliminar permanentemente"** - NUEVO
+- Botón "Apply & Restart" funcional
+- Botón "Check for updates" - abre GitHub Releases
 
 ### 7. System Tray ✅
 - Icono en bandeja del sistema
@@ -236,24 +276,30 @@ D:\proyectos\SysPulse\
 - Lista de archivos en cuarentena
 - Botones Open, Restore, Delete
 - Scroll para listas largas
-- **Muestra tamaño total de cuarentena** (NUEVO)
-- **Auto-carga al cambiar a pestaña Cleaner** (NUEVO)
+- **Muestra tamaño total de cuarentena**
+- **Auto-carga al cambiar a pestaña Cleaner**
+
+### 9. Installer ✅ (NUEVO - 25 sep)
+- Inno Setup script `installer.iss`
+- Check de actualizaciones al iniciar (GitHub API)
+- Multi-idioma (English/Spanish)
+- Compresión LZMA2/max
+- Desinstalador completo
 
 ---
 
 ## Próximos Pasos
 
-Ver `instrucciones-seguir.md` para detalles de implementación.
+Ver `plan-continuacion.md` para detalles.
 
-1. Tema claro completo con toggle
-2. Convertir icono SVG a ICO para Windows
-3. Instalador con Inno Setup
-4. Publicar en GitHub
-5. Configurar CI/CD con GitHub Actions
+1. **Inmediato**: `cargo build --release` + compilar instalador + Release v0.3.0
+2. **Esta semana**: Icono .ico + LICENSE + Test completo
+3. **Futuro**: CI/CD + Tema claro + Gráficos + Notificaciones + Portable mode
 
 ---
 
-**Última actualización:** 11 de julio de 2026  
+**Última actualización:** 25 de septiembre de 2026  
 **Versión del proyecto:** 0.3.0  
-**Estado:** Funcional con UI premium y System Monitor  
-**Responsable:** Equipo de Desarrollo SysPulse
+**Estado:** Funcional, compilando OK, listo para release pipeline  
+**Responsable:** H3rC4  
+**Repo:** https://github.com/H3rC4/syspulse
