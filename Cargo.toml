@@ -1,11 +1,11 @@
 [package]
 name = "syspulse"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["SysPulse Contributors"]
 description = "Cross-platform system optimizer and process monitor with Slint UI"
 license = "MIT"
-repository = "https://github.com/yourusername/syspulse"
+repository = "https://github.com/H3rC4/syspulse"
 rust-version = "1.75"
 
 [dependencies]
