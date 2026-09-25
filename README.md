@@ -228,4 +228,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 ---
 
 **Last Updated:** 24 September 2026  
-**Status:** v0.3.0 — Functional, ready for release pipeline
+**Status:** v0.3.0 — Functional, ready for release pipeline# syspulse
