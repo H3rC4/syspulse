@@ -706,6 +706,7 @@ component CpuFocusTab inherits Rectangle {
 component SettingsTab inherits Rectangle {
     in-out property <int> language-index: 0;
     in-out property <bool> dark-mode: true;
+    in-out property <bool> light-mode: false;  // NUEVO
     in-out property <bool> start-with-os: false;
     in-out property <float> history-days: 30;
     in-out property <float> quarantine-days: 7;
@@ -754,6 +755,13 @@ component SettingsTab inherits Rectangle {
                 SettingRow {
                     label: "Dark mode";
                     CheckBox { checked <=> dark-mode; }
+                }
+
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                SettingRow {
+                    label: "Light mode";
+                    CheckBox { checked <=> light-mode; }
                 }
 
                 Rectangle { height: 1px; background: Theme.border-subtle; }
@@ -1423,11 +1431,14 @@ export component AppWindow inherits Window {
 
     in-out property <int> language-index: 0;
     in-out property <bool> dark-mode: true;
+    in-out property <bool> light-mode: false;  // NUEVO: para toggle tema claro
     in-out property <bool> start-with-os: false;
     in-out property <float> history-days: 30;
     in-out property <float> quarantine-days: 7;
+    in-out property <bool> permanent-delete: false;  // NUEVO: property en AppWindow
     callback save-settings();
     callback check-updates();
+    callback set_theme_colors(color, color, color, color, color, color, color, color, color, color);  // NUEVO: para theme switching
 
     // ── System Monitor properties ──
     in property <float> sys-cpu-usage: 0.0;
@@ -1692,9 +1703,11 @@ export component AppWindow inherits Window {
             if root.current-tab == 4: SettingsTab {
                 language-index <=> root.language-index;
                 dark-mode <=> root.dark-mode;
+                light-mode <=> root.light-mode;
                 start-with-os <=> root.start-with-os;
                 history-days <=> root.history-days;
                 quarantine-days <=> root.quarantine-days;
+                permanent-delete <=> root.permanent-delete;
                 version: root.app-version;
                 save => { root.save-settings(); }
                 check-updates => { root.check-updates(); }
