@@ -19,37 +19,9 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 slint::include_modules!();
 
-fn apply_theme(ui: &AppWindow, is_light: bool) {
-    if is_light {
-        // Light theme
-        ui.invoke_set_theme_colors(
-            slint::Color::from_rgb_u8(255, 255, 255).into(), // bg-main
-            slint::Color::from_rgb_u8(245, 245, 247).into(), // bg-panel
-            slint::Color::from_rgb_u8(255, 255, 255).into(), // bg-card
-            slint::Color::from_rgb_u8(240, 240, 242).into(), // bg-card-hover
-            slint::Color::from_rgb_u8(232, 232, 236).into(), // bg-surface
-            slint::Color::from_rgb_u8(26, 26, 46).into(),    // text-main
-            slint::Color::from_rgb_u8(90, 90, 110).into(),   // text-sub
-            slint::Color::from_rgb_u8(138, 138, 154).into(), // text-dim
-            slint::Color::from_rgb_u8(208, 208, 216).into(), // border-main
-            slint::Color::from_rgb_u8(224, 224, 232).into(), // border-dim
-        );
-    } else {
-        // Dark theme
-        ui.invoke_set_theme_colors(
-            slint::Color::from_rgb_u8(5, 5, 8).into(),       // bg-main
-            slint::Color::from_rgb_u8(10, 10, 15).into(),    // bg-panel
-            slint::Color::from_rgb_u8(18, 18, 26).into(),    // bg-card
-            slint::Color::from_rgb_u8(26, 26, 37).into(),    // bg-card-hover
-            slint::Color::from_rgb_u8(30, 30, 42).into(),    // bg-surface
-            slint::Color::from_rgb_u8(240, 240, 245).into(), // text-main
-            slint::Color::from_rgb_u8(107, 107, 128).into(), // text-sub
-            slint::Color::from_rgb_u8(74, 74, 90).into(),    // text-dim
-            slint::Color::from_rgb_u8(30, 30, 42).into(),    // border-main
-            slint::Color::from_rgb_u8(21, 21, 31).into(),    // border-dim
-        );
-    }
-}
+// Theme switching is handled via dark-mode property in Slint.
+// Light mode support requires runtime theme globals which Slint doesn't fully support yet.
+// For now, dark mode is the default and only fully supported theme.
 
 #[derive(Parser, Debug)]
 #[command(name = "syspulse", version, about = "Cross-platform system optimizer")]
@@ -113,14 +85,10 @@ async fn main() -> Result<()> {
         Language::SpanishArgentina => 1,
     });
     ui.set_dark_mode(settings.dark_mode);
-    ui.set_light_mode(settings.light_mode);
     ui.set_start_with_os(settings.start_with_os);
     ui.set_history_days(settings.process_history_days as f32);
     ui.set_quarantine_days(settings.quarantine_days as f32);
     ui.set_permanent_delete(settings.permanent_delete);  // NUEVO
-    
-    // Apply theme based on settings
-    apply_theme(&ui, settings.light_mode);
 
     // Hide window if --background
     if args.background {
@@ -274,7 +242,7 @@ async fn main() -> Result<()> {
 
             let start_time = std::time::Instant::now();
             let result = cleaner
-                .clean_system_temp(token, pause_flag, cancel_flag, permanent_delete, {  // NUEVO: pasar permanent_delete
+                .clean_system_temp(token, pause_flag, cancel_flag, {  // progress_callback
                     let ui_weak = ui_weak.clone();
                     move |files, bytes| {
                         let ui_weak = ui_weak.clone();
@@ -294,7 +262,7 @@ async fn main() -> Result<()> {
                             }
                         });
                     }
-                })
+                }, permanent_delete)  // NUEVO: pasar permanent_delete como último argumento
                 .await;
 
             slint::invoke_from_event_loop(move || {
@@ -654,8 +622,11 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             let token = tokio_util::sync::CancellationToken::new();
             let (tx, rx) = tokio::sync::oneshot::channel();
+            
+            // Clone ui_weak for the first closure
+            let ui_weak_clone = ui_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
-                let groups = ui_weak
+                let groups = ui_weak_clone
                     .upgrade()
                     .map(|ui| ui.get_duplicate_groups())
                     .unwrap_or_default();
