@@ -1,231 +1,231 @@
 # SysPulse
 
-Cross-platform system optimizer with real-time monitoring, built with **Rust** and **Slint**.
+Optimizador de sistema multiplataforma con monitoreo en tiempo real, construido con **Rust** y **Slint**.
 
 ![Version](https://img.shields.io/badge/version-0.3.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.75%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-## ✨ Features
+## ✨ Características
 
-| Module | Description |
+| Módulo | Descripción |
 |--------|-------------|
-| **System Monitor** | Real-time CPU, RAM, Disk, Network, Temperatures, Uptime, Top Processes (auto-refresh 2s) |
-| **Smart Cleaner** | Temp files cleanup + Duplicate finder (SHA-256) + Quarantine with manifest |
-| **Process Hunter** | Transient process detection + SQLite history + JSON/CSV export for AI analysis |
-| **CPU Focus** | Boost process priority (Above Normal on Windows) |
-| **Premium UI** | Neon theme, smooth animations (200-300ms), i18n (EN / ES-AR) |
-| **System Tray** | Background mode, context menu, double-click to restore |
-| **✨ Permanent Delete** | Toggle to bypass Recycle Bin for large cleanups (instant, no RAM spike) |
+| **System Monitor** | CPU, RAM, Disco, Red, Temperaturas, Uptime, Top Procesos en tiempo real (auto-refresh 2s) |
+| **Smart Cleaner** | Limpieza de temporales + Buscador de duplicados (SHA-256) + Cuarentena con manifiesto |
+| **Process Hunter** | Detección de procesos transitorios + Historial SQLite + Export JSON/CSV para análisis IA |
+| **CPU Focus** | Aumentar prioridad de proceso (Above Normal en Windows) |
+| **Premium UI** | Tema neon, animaciones suaves (200-300ms), i18n (EN / ES-AR) |
+| **System Tray** | Modo background, menú contextual, doble clic para restaurar |
+| **✨ Eliminar permanentemente** | Toggle para omitir Papelera en limpiezas grandes (instantáneo, sin pico de RAM) |
 
-## 📸 Screenshots
+## 📸 Capturas de pantalla
 
-> *Add screenshots here after building*
+> *Agregar capturas tras compilar*
 
-## 🚀 Quick Start
+## 🚀 Inicio rápido
 
-### Windows (Pre-built)
-1. Go to [Releases](../../releases)
-2. Download `SysPulse-Setup-0.3.0.exe` (or `syspulse.exe` portable)
-3. Run and enjoy
+### Windows (Pre-compilado)
+1. Ve a [Releases](../../releases)
+2. Descarga `SysPulse-Setup-0.3.0.exe` (o `syspulse.exe` portable)
+3. Ejecuta y disfruta
 
-### Build from Source
+### Compilar desde código
 
-**Prerequisites:**
+**Requisitos:**
 - Windows 10/11
 - [Rust 1.75+](https://rustup.rs/)
-- Visual Studio 2022+ with **Desktop development with C++** workload
+- Visual Studio 2022+ con carga de trabajo **Desarrollo de escritorio con C++**
 
 ```powershell
-# Clone
+# Clonar
 git clone https://github.com/H3rC4/syspulse.git
 cd syspulse
 
-# Build release
+# Compilar release
 cargo build --release
 
-# Run
+# Ejecutar
 .\target\release\syspulse.exe
 ```
 
-### Run in Background (System Tray only)
+### Ejecutar en background (Solo System Tray)
 ```powershell
 .\target\release\syspulse.exe --background
 ```
 
-## ⚙️ Configuration
+## ⚙️ Configuración
 
-Settings are stored in:
+Los ajustes se guardan en:
 - **Windows:** `%APPDATA%\SysPulse\settings.toml`
-- **Data (DB, quarantine, logs):** `%LOCALAPPDATA%\SysPulse\`
+- **Datos (BD, cuarentena, logs):** `%LOCALAPPDATA%\SysPulse\`
 
-### Key Settings (Settings tab)
-- **Language:** English / Español (Argentina) — requires restart
-- **Dark mode:** Always on (light theme WIP)
-- **Start with OS:** Auto-start on login
-- **Process history retention:** Days to keep process events (default 30)
-- **Quarantine retention:** Days before auto-purge (default 7)
-- **🗑️ Eliminar permanentemente:** **NEW** — Delete files directly without Recycle Bin (use for large cleanups >1GB to avoid system freeze)
+### Ajustes clave (Pestaña Settings)
+- **Idioma:** English / Español (Argentina) — requiere reinicio
+- **Modo oscuro:** Siempre activo (tema claro en desarrollo)
+- **Iniciar con Windows:** Auto-inicio al loguearse
+- **Retención historial procesos:** Días a conservar eventos (default 30)
+- **Retención cuarentena:** Días antes de auto-purga (default 7)
+- **🗑️ Eliminar permanentemente:** **NUEVO** — Elimina archivos directo sin Papelera (usar en limpiezas >1GB para evitar freeze del sistema)
 
-## 🗂️ Project Structure
+## 🗂️ Estructura del proyecto
 
 ```
 SysPulse/
-├── Cargo.toml              # Dependencies
-├── build.rs                # Slint compiler + icon embedding
+├── Cargo.toml              # Dependencias
+├── build.rs                # Compilador Slint + embedding icono
 ├── assets/
-│   ├── icon.svg            # Vector icon (heart + EKG neon)
-│   └── icon.ico            # Windows icon (multi-res, TODO)
+│   ├── icon.svg            # Icono vectorial (corazón + EKG neon)
+│   └── icon.ico            # Icono Windows (multi-res, PENDIENTE)
 ├── ui/
-│   └── app.slint           # Complete UI (1700+ lines)
+│   └── app.slint           # UI completa (1700+ líneas)
 ├── locales/
-│   ├── en/main.ftl         # English (98 keys)
-│   └── es-AR/main.ftl      # Spanish Argentina (98 keys)
+│   ├── en/main.ftl         # Inglés (98 claves)
+│   └── es-AR/main.ftl      # Español Argentina (98 claves)
 ├── src/
 │   ├── main.rs             # Entry + callbacks + timers
-│   ├── models.rs           # Data structures
+│   ├── models.rs           # Estructuras de datos
 │   └── modules/
-│       ├── cleaner.rs      # Temp clean + duplicates + quarantine
+│       ├── cleaner.rs      # Limpieza temp + duplicados + cuarentena
 │       ├── config.rs       # Settings + autostart
-│       ├── sys_monitor.rs  # System metrics (sysinfo 0.30)
+│       ├── sys_monitor.rs  # Métricas sistema (sysinfo 0.30)
 │       ├── process_hunter.rs
 │       ├── cpu_optimizer.rs
-│       ├── i18n.rs         # Fluent localization
+│       ├── i18n.rs         # Localización Fluent
 │       └── tray.rs         # System tray (tao)
-├── planes/                 # Project docs & plans
+├── planes/                 # Documentación y planes
 └── target/release/         # Build output
 ```
 
-## 🛠️ Development
+## 🛠️ Desarrollo
 
-### Commands
+### Comandos
 ```powershell
-# Debug build (fast)
+# Build debug (rápido)
 cargo build
 
-# Release build (optimized)
+# Build release (optimizado)
 cargo build --release
 
-# Run with debug logs
+# Ejecutar con logs debug
 $env:RUST_LOG="debug"; .\target\release\syspulse.exe
 
-# Run with trace logs (very verbose)
+# Ejecutar con logs trace (muy verboso)
 $env:RUST_LOG="trace"; .\target\release\syspulse.exe
 
-# Lint
+# Linter
 cargo clippy
 
-# Check without building
+# Verificar sin compilar
 cargo check
 
-# Clean build artifacts
+# Limpiar artifacts
 cargo clean
 ```
 
-### Tech Stack
-| Layer | Technology |
-|-------|------------|
-| Language | Rust 2021 |
-| GUI | Slint 1.2+ (native, GPU-accelerated) |
-| System Info | sysinfo 0.30 |
+### Stack tecnológico
+| Capa | Tecnología |
+|------|------------|
+| Lenguaje | Rust 2021 |
+| GUI | Slint 1.2+ (nativo, GPU-accelerated) |
+| Info sistema | sysinfo 0.30 |
 | Async | tokio |
-| Serialization | serde + toml |
+| Serialización | serde + toml |
 | Hashing | sha2 (SHA-256) |
 | i18n | fluent-rs |
-| Tray | tao (cross-platform) |
-| Trash | trash crate (Recycle Bin) |
+| Tray | tao (multiplataforma) |
+| Papelera | trash crate (Recycle Bin) |
 
-### Slint Gotchas (for contributors)
-- No `linear-gradient` → use solid colors
-- No `.toFixed()` → format in Rust with `format!()`
-- No `%` on floats → use `Math.mod()`
-- `ModelRc` not `Send` → create inside `invoke_from_event_loop`
-- No native tooltips → use descriptive Text
-- `Timer::default()` + `.start()` not `Timer::new()`
+### Particularidades de Slint (para contribuidores)
+- No `linear-gradient` → usar colores sólidos
+- No `.toFixed()` → formatear en Rust con `format!()`
+- No `%` sobre floats → usar `Math.mod()`
+- `ModelRc` no es `Send` → crear dentro de `invoke_from_event_loop`
+- No tooltips nativos → usar Text descriptivo
+- `Timer::default()` + `.start()` no `Timer::new()`
 
-## 📦 Distribution
+## 📦 Distribución
 
-### Create Windows Installer (Inno Setup)
-1. Install [Inno Setup 6](https://jrsoftware.org/isdl.php)
-2. Create `installer.iss` (see `planes/instrucciones-seguir.md`)
-3. Compile → `output/SysPulse-Setup-0.3.0.exe`
+### Crear instalador Windows (Inno Setup)
+1. Instala [Inno Setup 6](https://jrsoftware.org/isdl.php)
+2. Crea `installer.iss` (ver `planes/instrucciones-seguir.md`)
+3. Compila → `output/SysPulse-Setup-0.3.0.exe`
 
 ### CI/CD (GitHub Actions)
-Workflow at `.github/workflows/build.yml`:
-- Builds on every push to `main`
-- Uploads `syspulse.exe` as artifact
-- Creates Release on tag `v*` with binary attached
+Workflow en `.github/workflows/build.yml`:
+- Compila en cada push a `main`
+- Sube `syspulse.exe` como artifact
+- Crea Release en tag `v*` con binario adjunto
 
 ## 🔮 Roadmap
 
-### v0.3.1 (Next)
-- [ ] Windows `.ico` icon (multi-resolution)
-- [ ] Inno Setup installer
-- [ ] GitHub Release with binaries
-- [ ] CI/CD pipeline
+### v0.3.1 (Próxima)
+- [ ] Icono Windows `.ico` (multi-resolución)
+- [ ] Instalador Inno Setup
+- [ ] GitHub Release con binarios
+- [ ] Pipeline CI/CD
 
 ### v0.4.0
-- [ ] Light theme (full toggle)
-- [ ] Real-time charts (CPU/RAM history)
-- [ ] Windows toast notifications
-- [ ] Portable mode (config in exe folder)
+- [ ] Tema claro (toggle completo)
+- [ ] Gráficos tiempo real (historial CPU/RAM)
+- [ ] Notificaciones toast Windows
+- [ ] Modo portable (config en carpeta exe)
 
 ### v1.0.0
-- [ ] Plugin system
-- [ ] Cross-platform (Linux/macOS full support)
-- [ ] Auto-updater
+- [ ] Sistema de plugins
+- [ ] Soporte completo Linux/macOS
+- [ ] Auto-actualizador
 
-## 🤝 Contributing
+## 🤝 Contribuir
 
-1. Fork the repo
-2. Create feature branch: `git checkout -b feature/amazing-feature`
-3. Commit changes: `git commit -m 'Add amazing feature'`
-4. Push: `git push origin feature/amazing-feature`
-5. Open Pull Request
+1. Fork del repo
+2. Rama feature: `git checkout -b feature/feature-increible`
+3. Commit: `git commit -m 'Agregar feature increible'`
+4. Push: `git push origin feature/feature-increible`
+5. Abre Pull Request
 
-## 📄 License
+## 📄 Licencia
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License — ver [LICENSE](LICENSE) para detalles.
 
-## 👨‍💻 Author
+## 👨‍💻 Autor
 
 **H3rC4** — [GitHub](https://github.com/H3rC4)
 
 ---
 
-## 📋 Resume Instructions (for maintainers)
+## 📋 Instrucciones de continuación (para maintainers)
 
-### If you're picking up this project:
+### Si retomas el proyecto:
 
-1. **Clone & Setup**
+1. **Clonar y configurar**
    ```powershell
    git clone https://github.com/H3rC4/syspulse.git
    cd syspulse
-   # Install Rust if needed: https://rustup.rs/
+   # Instalar Rust si falta: https://rustup.rs/
    ```
 
-2. **Build & Test**
+2. **Compilar y testear**
    ```powershell
    cargo build --release
    .\target\release\syspulse.exe
    ```
 
-3. **Key Files to Know**
-   - `src/main.rs` — App entry, callbacks, timers
-   - `ui/app.slint` — All UI components
-   - `src/modules/cleaner.rs` — Clean logic (permanent_delete toggle)
-   - `src/modules/config.rs` — Settings persistence
-   - `planes/plan-continuacion.md` — Detailed continuation plan
+3. **Archivos clave**
+   - `src/main.rs` — Entry point, callbacks, timers
+   - `ui/app.slint` — Todos los componentes UI
+   - `src/modules/cleaner.rs` — Lógica limpieza (toggle permanent_delete)
+   - `src/modules/config.rs` — Persistencia settings
+   - `planes/plan-continuacion.md` — Plan detallado de continuación
 
-4. **Current Blockers**
-   - Push to GitHub needs Personal Access Token
-   - Icon `.ico` not created yet
-   - Installer not built
-   - Light theme blocked by Slint limitations
+4. **Bloqueadores actuales**
+   - Push a GitHub requiere Personal Access Token
+   - Icono `.ico` no creado aún
+   - Instalador no compilado
+   - Tema claro bloqueado por limitaciones de Slint
 
-5. **Testing Checklist** (see `planes/plan-continuacion.md`)
+5. **Checklist de testing** (ver `planes/plan-continuacion.md`)
 
 ---
 
-**Last Updated:** 24 September 2026  
-**Status:** v0.3.0 — Functional, ready for release pipeline# syspulse
+**Última actualización:** 25 de septiembre de 2026  
+**Estado:** v0.3.0 — Funcional, listo para pipeline de release
