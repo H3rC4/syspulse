@@ -10,9 +10,11 @@ use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
-const BUFFER_SIZE: usize = 8192;
+const BUFFER_SIZE: usize = 65536; // 64 KB buffer for high I/O throughput
+const PRE_HASH_SIZE: usize = 16384; // 16 KB for duplicate pre-hashing
 const CHUNK_SIZE: usize = 1000; // Process files in batches to avoid memory bloat
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ScanTarget {
     SystemTemp,
@@ -74,7 +76,10 @@ impl Cleaner {
                 paths.push(PathBuf::from(temp));
             }
             if let Some(local_app_data) = dirs::data_local_dir() {
-                paths.push(local_app_data.join("Temp"));
+                let temp_dir = local_app_data.join("Temp");
+                if !paths.contains(&temp_dir) {
+                    paths.push(temp_dir);
+                }
                 paths.push(local_app_data.join("npm-cache"));
                 paths.push(local_app_data.join("pip").join("cache"));
                 paths.push(local_app_data.join("Cargo").join("registry").join("cache"));
@@ -382,9 +387,50 @@ impl Cleaner {
                 continue;
             }
 
+            // Two-stage hashing optimization:
+            // 1. If files are larger than 16 KB, compute a fast pre-hash of the first 16 KB.
+            // 2. Only compute the full SHA-256 for files whose pre-hash matches.
+            let candidate_paths = if size > PRE_HASH_SIZE as u64 {
+                let mut by_pre_hash: HashMap<String, Vec<PathBuf>> = HashMap::new();
+                for path in paths {
+                    if token.is_cancelled() {
+                        return Ok(Vec::new());
+                    }
+                    while pause_flag.load(Ordering::Relaxed) {
+                        if token.is_cancelled() {
+                            return Ok(Vec::new());
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+
+                    match compute_file_pre_hash(&path).await {
+                        Ok(pre_hash) => {
+                            by_pre_hash.entry(pre_hash).or_default().push(path);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to pre-hash {}: {}", path.display(), e);
+                        }
+                    }
+                }
+
+                let mut matching = Vec::new();
+                for (_, pre_paths) in by_pre_hash {
+                    if pre_paths.len() >= 2 {
+                        matching.extend(pre_paths);
+                    }
+                }
+                matching
+            } else {
+                paths
+            };
+
+            if candidate_paths.len() < 2 {
+                continue;
+            }
+
             let mut by_hash: HashMap<String, Vec<(PathBuf, Option<chrono::DateTime<Local>>)>> = HashMap::new();
 
-            for path in paths {
+            for path in candidate_paths {
                 if token.is_cancelled() {
                     return Ok(Vec::new());
                 }
@@ -522,7 +568,7 @@ impl Cleaner {
                 Err(_) => continue,
             };
 
-            let original_path = self.original_path_from_quarantine(path);
+            let original_path = self.original_path_from_quarantine_with_manifest(path, &manifest);
 
             entries.push(QuarantineEntry {
                 id: None,
@@ -668,6 +714,7 @@ impl Cleaner {
         Ok(size)
     }
 
+    #[allow(dead_code)]
     fn quarantine_path_for(&self, original: &Path) -> PathBuf {
         let canonical = original.canonicalize().unwrap_or_else(|_| original.to_path_buf());
         let safe_name = canonical
@@ -682,10 +729,9 @@ impl Cleaner {
         ))
     }
 
-    fn original_path_from_quarantine(&self, quarantine_path: &Path) -> PathBuf {
+    fn original_path_from_quarantine_with_manifest(&self, quarantine_path: &Path, manifest: &QuarantineManifest) -> PathBuf {
         // Try to read from manifest first
         if let Some(file_name) = quarantine_path.file_name() {
-        let manifest = QuarantineManifest::load(&self.manifest_path);
             if let Some(original) = manifest.entries.get(file_name.to_string_lossy().as_ref()) {
                 return PathBuf::from(original);
             }
@@ -700,6 +746,27 @@ impl Cleaner {
         }
         quarantine_path.to_path_buf()
     }
+}
+
+async fn compute_file_pre_hash(path: &Path) -> Result<String> {
+    let path = path.to_path_buf();
+
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut file = std::fs::File::open(&path)
+            .with_context(|| format!("Failed to open {:?}", path))?;
+        let mut hasher = Sha256::new();
+        let mut buffer = vec![0u8; PRE_HASH_SIZE];
+
+        let n = file
+            .read(&mut buffer)
+            .with_context(|| format!("Failed to read pre-hash for {:?}", path))?;
+        hasher.update(&buffer[..n]);
+
+        Ok::<String, anyhow::Error>(format!("{:x}", hasher.finalize()))
+    })
+    .await
+    .context("Failed to spawn pre-hash task")?
 }
 
 async fn compute_file_hash(path: &Path) -> Result<String> {

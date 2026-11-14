@@ -60,17 +60,20 @@ async fn main() -> Result<()> {
     let (process_hunter, hunter_cmd_rx) =
         ProcessHunter::new().context("Failed to initialize Process Hunter")?;
     let hunter_cmd_tx = process_hunter.command_sender();
+    let process_hunter = Arc::new(process_hunter);
 
     // Start process hunter background task
     let history_days = settings.process_history_days;
+    let hunter_task_clone = process_hunter.clone();
     tokio::spawn(async move {
-        process_hunter.start(hunter_cmd_rx, history_days).await;
+        hunter_task_clone.start(hunter_cmd_rx, history_days).await;
     });
 
     // Spawn tray
     tracing::info!("Spawning system tray...");
     let (tray_event_tx, mut tray_event_rx) = mpsc::unbounded_channel::<TrayEvent>();
-    let _tray_handle = tray::spawn_tray(tray_event_tx).map_err(|e| anyhow::anyhow!(e))?;
+    let tray_handle = Arc::new(tray::spawn_tray(tray_event_tx).map_err(|e| anyhow::anyhow!(e))?);
+    let hunter_paused = Arc::new(AtomicBool::new(false));
     tracing::info!("System tray spawned");
 
     // Create Slint UI
@@ -203,7 +206,6 @@ async fn main() -> Result<()> {
     let cleaner_clone = cleaner.clone();
     let pause_flag_clone = pause_flag.clone();
     let cancel_flag_clone = cancel_flag.clone();
-    let ui_weak_clean = ui_weak.clone();  // Para leer permanent_delete
     ui.on_clean_system_temp(move || {
         let ui_weak = ui_weak.clone();
         let cleaner = cleaner_clone.clone();
@@ -272,10 +274,18 @@ async fn main() -> Result<()> {
                     ui.set_cleaner_progress(1.0);
                     match result {
                         Ok(r) => {
-                            let status = if r.errors.is_empty() {
-                                format!("Sent {} files to Recycle Bin", r.files_found)
+                            let status = if permanent_delete {
+                                if r.errors.is_empty() {
+                                    format!("Permanently deleted {} files", r.files_found)
+                                } else {
+                                    format!("Permanently deleted {} files, {} errors", r.files_found, r.errors.len())
+                                }
                             } else {
-                                format!("Sent {} files to Recycle Bin, {} errors", r.files_found, r.errors.len())
+                                if r.errors.is_empty() {
+                                    format!("Sent {} files to Recycle Bin", r.files_found)
+                                } else {
+                                    format!("Sent {} files to Recycle Bin, {} errors", r.files_found, r.errors.len())
+                                }
                             };
                             ui.set_cleaner_status(status.into());
                             if !r.errors.is_empty() {
@@ -332,9 +342,9 @@ async fn main() -> Result<()> {
                             // Sort by created date (oldest first), then by filename as tiebreaker
                             files.sort_by(|a, b| {
                                 let a_date = chrono::NaiveDateTime::parse_from_str(&a.created.to_string(), "%Y-%m-%d %H:%M")
-                                    .unwrap_or_else(|_| chrono::NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
+                                    .unwrap_or_default();
                                 let b_date = chrono::NaiveDateTime::parse_from_str(&b.created.to_string(), "%Y-%m-%d %H:%M")
-                                    .unwrap_or_else(|_| chrono::NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
+                                    .unwrap_or_default();
                                 let date_cmp = a_date.cmp(&b_date);
                                 if date_cmp == std::cmp::Ordering::Equal {
                                     // If dates are equal, sort by filename
@@ -404,9 +414,9 @@ async fn main() -> Result<()> {
                             // Sort by created date (newest first), then by filename as tiebreaker
                             files.sort_by(|a, b| {
                                 let a_date = chrono::NaiveDateTime::parse_from_str(&a.created.to_string(), "%Y-%m-%d %H:%M")
-                                    .unwrap_or_else(|_| chrono::NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
+                                    .unwrap_or_default();
                                 let b_date = chrono::NaiveDateTime::parse_from_str(&b.created.to_string(), "%Y-%m-%d %H:%M")
-                                    .unwrap_or_else(|_| chrono::NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
+                                    .unwrap_or_default();
                                 let date_cmp = b_date.cmp(&a_date);
                                 if date_cmp == std::cmp::Ordering::Equal {
                                     // If dates are equal, sort by filename
@@ -700,11 +710,40 @@ async fn main() -> Result<()> {
     });
 
     // ── Callback: Tab Changed ──
-    // Auto-load quarantine when switching to Cleaner tab
+    // Auto-load quarantine when switching to Cleaner tab, auto-load events for Process Hunter
     let ui_weak = ui.as_weak();
     let cleaner_clone = cleaner.clone();
+    let hunter_tab_clone = process_hunter.clone();
     ui.on_tab_changed(move |tab_index| {
-        if tab_index == 2 {
+        if tab_index == 1 {
+            // Process Hunter tab - auto-load events
+            let ui_weak = ui_weak.clone();
+            let hunter = hunter_tab_clone.clone();
+            tokio::spawn(async move {
+                let events = hunter.list_events(100).await.unwrap_or_default();
+                slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        let slint_events: slint::ModelRc<ProcessEventData> =
+                            slint::ModelRc::new(slint::VecModel::from(
+                                events
+                                    .into_iter()
+                                    .map(|e| ProcessEventData {
+                                        id: e.id.unwrap_or(0) as i32,
+                                        timestamp: e.timestamp.format("%Y-%m-%d %H:%M:%S").to_string().into(),
+                                        name: e.name.into(),
+                                        pid: e.pid as i32,
+                                        parent_pid: e.parent_pid.unwrap_or(0) as i32,
+                                        command_line: e.command_line.into(),
+                                        lifetime: e.lifetime_seconds.map(|s| format!("{}s", s)).unwrap_or_else(|| "-".to_string()).into(),
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ));
+                        ui.set_process_events(slint_events);
+                    }
+                })
+                .ok();
+            });
+        } else if tab_index == 2 {
             // Cleaner tab - auto-load quarantine
             let ui_weak = ui_weak.clone();
             let cleaner = cleaner_clone.clone();
@@ -734,6 +773,38 @@ async fn main() -> Result<()> {
                 });
             });
         }
+    });
+
+    // ── Callback: Scan / Refresh Process Hunter Events ──
+    let ui_weak = ui.as_weak();
+    let hunter_for_scan = process_hunter.clone();
+    ui.on_scan_processes(move || {
+        let ui_weak = ui_weak.clone();
+        let hunter = hunter_for_scan.clone();
+        tokio::spawn(async move {
+            let events = hunter.list_events(100).await.unwrap_or_default();
+            slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    let slint_events: slint::ModelRc<ProcessEventData> =
+                        slint::ModelRc::new(slint::VecModel::from(
+                            events
+                                .into_iter()
+                                .map(|e| ProcessEventData {
+                                    id: e.id.unwrap_or(0) as i32,
+                                    timestamp: e.timestamp.format("%Y-%m-%d %H:%M:%S").to_string().into(),
+                                    name: e.name.into(),
+                                    pid: e.pid as i32,
+                                    parent_pid: e.parent_pid.unwrap_or(0) as i32,
+                                    command_line: e.command_line.into(),
+                                    lifetime: e.lifetime_seconds.map(|s| format!("{}s", s)).unwrap_or_else(|| "-".to_string()).into(),
+                                })
+                                .collect::<Vec<_>>(),
+                        ));
+                    ui.set_process_events(slint_events);
+                }
+            })
+            .ok();
+        });
     });
 
     // ── Callback: Load Quarantine ──
@@ -771,26 +842,76 @@ async fn main() -> Result<()> {
 
     // ─ Callback: Restore Quarantine ──
     let cleaner_clone = cleaner.clone();
+    let ui_weak = ui.as_weak();
     ui.on_restore_quarantine(move |index| {
         let cleaner = cleaner_clone.clone();
-        let entries = cleaner.list_quarantine().unwrap_or_default();
-        if let Some(entry) = entries.get(index as usize) {
-            if let Err(e) = cleaner.restore_from_quarantine(entry) {
-                tracing::error!("Failed to restore from quarantine: {}", e);
+        let ui_weak = ui_weak.clone();
+        tokio::spawn(async move {
+            let entries = cleaner.list_quarantine().unwrap_or_default();
+            if let Some(entry) = entries.get(index as usize) {
+                if let Err(e) = cleaner.restore_from_quarantine(entry) {
+                    tracing::error!("Failed to restore from quarantine: {}", e);
+                }
             }
-        }
+            let updated_entries = cleaner.list_quarantine().unwrap_or_default();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    let total_bytes: u64 = updated_entries.iter().map(|e| e.size).sum();
+                    let total_size = modules::cleaner::format_bytes(total_bytes);
+                    let slint_entries: slint::ModelRc<QuarantineEntryData> =
+                        slint::ModelRc::new(slint::VecModel::from(
+                            updated_entries
+                                .into_iter()
+                                .map(|e| QuarantineEntryData {
+                                    original_path: e.original_path.to_string_lossy().to_string().into(),
+                                    quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
+                                    size: modules::cleaner::format_bytes(e.size).into(),
+                                    quarantined_at: e.quarantined_at.format("%Y-%m-%d %H:%M").to_string().into(),
+                                })
+                                .collect::<Vec<_>>(),
+                        ));
+                    ui.set_quarantine_entries(slint_entries);
+                    ui.set_quarantine_total_size(total_size.into());
+                }
+            });
+        });
     });
 
     // ── Callback: Delete Quarantine ──
     let cleaner_clone = cleaner.clone();
+    let ui_weak = ui.as_weak();
     ui.on_delete_quarantine(move |index| {
         let cleaner = cleaner_clone.clone();
-        let entries = cleaner.list_quarantine().unwrap_or_default();
-        if let Some(entry) = entries.get(index as usize) {
-            if let Err(e) = cleaner.delete_quarantine_permanently(entry) {
-                tracing::error!("Failed to delete from quarantine: {}", e);
+        let ui_weak = ui_weak.clone();
+        tokio::spawn(async move {
+            let entries = cleaner.list_quarantine().unwrap_or_default();
+            if let Some(entry) = entries.get(index as usize) {
+                if let Err(e) = cleaner.delete_quarantine_permanently(entry) {
+                    tracing::error!("Failed to delete from quarantine: {}", e);
+                }
             }
-        }
+            let updated_entries = cleaner.list_quarantine().unwrap_or_default();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    let total_bytes: u64 = updated_entries.iter().map(|e| e.size).sum();
+                    let total_size = modules::cleaner::format_bytes(total_bytes);
+                    let slint_entries: slint::ModelRc<QuarantineEntryData> =
+                        slint::ModelRc::new(slint::VecModel::from(
+                            updated_entries
+                                .into_iter()
+                                .map(|e| QuarantineEntryData {
+                                    original_path: e.original_path.to_string_lossy().to_string().into(),
+                                    quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
+                                    size: modules::cleaner::format_bytes(e.size).into(),
+                                    quarantined_at: e.quarantined_at.format("%Y-%m-%d %H:%M").to_string().into(),
+                                })
+                                .collect::<Vec<_>>(),
+                        ));
+                    ui.set_quarantine_entries(slint_entries);
+                    ui.set_quarantine_total_size(total_size.into());
+                }
+            });
+        });
     });
 
     // ── Callback: Refresh Processes ──
@@ -824,12 +945,36 @@ async fn main() -> Result<()> {
     });
 
     // ── Callback: Toggle Focus ──
+    let ui_weak = ui.as_weak();
     let cpu_optimizer_clone = cpu_optimizer.clone();
     ui.on_toggle_focus(move |pid| {
         let cpu_optimizer = cpu_optimizer_clone.clone();
-        if let Err(e) = cpu_optimizer.lock().unwrap().toggle_focus(pid as u32) {
-            tracing::error!("Failed to toggle focus for PID {}: {}", pid, e);
-        };
+        let ui_weak = ui_weak.clone();
+        tokio::spawn(async move {
+            if let Err(e) = cpu_optimizer.lock().unwrap().toggle_focus(pid as u32) {
+                tracing::error!("Failed to toggle focus for PID {}: {}", pid, e);
+            };
+            let entries = cpu_optimizer.lock().unwrap().list_user_processes();
+            slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    let slint_entries: slint::ModelRc<ProcessEntryData> =
+                        slint::ModelRc::new(slint::VecModel::from(
+                            entries
+                                .into_iter()
+                                .map(|e| ProcessEntryData {
+                                    pid: e.pid as i32,
+                                    name: e.name.into(),
+                                    cpu: format!("{:.1}%", e.cpu_percent).into(),
+                                    memory: format!("{} MB", e.memory_mb).into(),
+                                    focused: e.focused,
+                                })
+                                .collect::<Vec<_>>(),
+                        ));
+                    ui.set_process_entries(slint_entries);
+                }
+            })
+            .ok();
+        });
     });
 
     // ── Callback: Refresh System Stats ──
@@ -1025,7 +1170,7 @@ async fn main() -> Result<()> {
 
     // ── Callback: Check Updates ──
     ui.on_check_updates(move || {
-        if let Err(e) = open::that("https://github.com/yourusername/syspulse/releases") {
+        if let Err(e) = open::that("https://github.com/H3rC4/syspulse/releases") {
             tracing::error!("Failed to open browser: {}", e);
         }
     });
@@ -1067,94 +1212,100 @@ async fn main() -> Result<()> {
 
         if let Some(ui) = ui_weak.upgrade() {
             if ui.get_current_tab() == 0 {
-                // Only refresh when Monitor tab is active
-                let stats = sys_monitor.lock().unwrap().refresh();
+                // Only refresh when Monitor tab is active, in background task
+                tokio::spawn(async move {
+                    let stats = sys_monitor.lock().unwrap().refresh();
 
-                // CPU
-                ui.set_sys_cpu_usage(stats.cpu_usage);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            // CPU
+                            ui.set_sys_cpu_usage(stats.cpu_usage);
 
-                // Cores
-                let cores_model: Vec<CoreUsageData> = stats
-                    .cores
-                    .iter()
-                    .enumerate()
-                    .map(|(i, core)| CoreUsageData {
-                        name: format!("Core {}", i).into(),
-                        usage: core.usage,
-                    })
-                    .collect();
-                ui.set_sys_cores(slint::ModelRc::new(slint::VecModel::from(cores_model)));
+                            // Cores
+                            let cores_model: Vec<CoreUsageData> = stats
+                                .cores
+                                .iter()
+                                .enumerate()
+                                .map(|(i, core)| CoreUsageData {
+                                    name: format!("Core {}", i).into(),
+                                    usage: core.usage,
+                                })
+                                .collect();
+                            ui.set_sys_cores(slint::ModelRc::new(slint::VecModel::from(cores_model)));
 
-                // Memory
-                ui.set_sys_total_memory(stats.total_memory as f32);
-                ui.set_sys_used_memory(stats.used_memory as f32);
-                ui.set_sys_total_swap(stats.total_swap as f32);
-                ui.set_sys_used_swap(stats.used_swap as f32);
+                            // Memory
+                            ui.set_sys_total_memory(stats.total_memory as f32);
+                            ui.set_sys_used_memory(stats.used_memory as f32);
+                            ui.set_sys_total_swap(stats.total_swap as f32);
+                            ui.set_sys_used_swap(stats.used_swap as f32);
 
-                // Load average
-                ui.set_sys_load_avg_1(stats.load_avg_1 as f32);
-                ui.set_sys_load_avg_5(stats.load_avg_5 as f32);
-                ui.set_sys_load_avg_15(stats.load_avg_15 as f32);
-                ui.set_sys_load_avg_text(format!("{:.2} / {:.2} / {:.2}", stats.load_avg_1, stats.load_avg_5, stats.load_avg_15).into());
+                            // Load average
+                            ui.set_sys_load_avg_1(stats.load_avg_1 as f32);
+                            ui.set_sys_load_avg_5(stats.load_avg_5 as f32);
+                            ui.set_sys_load_avg_15(stats.load_avg_15 as f32);
+                            ui.set_sys_load_avg_text(format!("{:.2} / {:.2} / {:.2}", stats.load_avg_1, stats.load_avg_5, stats.load_avg_15).into());
 
-                // Disks
-                let disks_model: Vec<DiskInfoData> = stats
-                    .disks
-                    .iter()
-                    .map(|disk| DiskInfoData {
-                        name: disk.name.clone().into(),
-                        mount_point: disk.mount_point.clone().into(),
-                        total_bytes: disk.total_bytes as f32,
-                        available_bytes: disk.available_bytes as f32,
-                    })
-                    .collect();
-                ui.set_sys_disks(slint::ModelRc::new(slint::VecModel::from(disks_model)));
+                            // Disks
+                            let disks_model: Vec<DiskInfoData> = stats
+                                .disks
+                                .iter()
+                                .map(|disk| DiskInfoData {
+                                    name: disk.name.clone().into(),
+                                    mount_point: disk.mount_point.clone().into(),
+                                    total_bytes: disk.total_bytes as f32,
+                                    available_bytes: disk.available_bytes as f32,
+                                })
+                                .collect();
+                            ui.set_sys_disks(slint::ModelRc::new(slint::VecModel::from(disks_model)));
 
-                // Network
-                ui.set_sys_network_up(stats.network_up_bps as f32);
-                ui.set_sys_network_down(stats.network_down_bps as f32);
+                            // Network
+                            ui.set_sys_network_up(stats.network_up_bps as f32);
+                            ui.set_sys_network_down(stats.network_down_bps as f32);
 
-                // Temperatures
-                let temps_model: Vec<TempInfoData> = stats
-                    .temperatures
-                    .iter()
-                    .map(|temp| TempInfoData {
-                        label: temp.label.clone().into(),
-                        temperature: temp.temperature,
-                    })
-                    .collect();
-                ui.set_sys_temperatures(slint::ModelRc::new(slint::VecModel::from(temps_model)));
+                            // Temperatures
+                            let temps_model: Vec<TempInfoData> = stats
+                                .temperatures
+                                .iter()
+                                .map(|temp| TempInfoData {
+                                    label: temp.label.clone().into(),
+                                    temperature: temp.temperature,
+                                })
+                                .collect();
+                            ui.set_sys_temperatures(slint::ModelRc::new(slint::VecModel::from(temps_model)));
 
-                // Uptime
-                ui.set_sys_uptime(stats.uptime_seconds as f32);
+                            // Uptime
+                            ui.set_sys_uptime(stats.uptime_seconds as f32);
 
-                // Top processes by CPU
-                let top_cpu_model: Vec<TopProcessData> = stats
-                    .top_cpu
-                    .iter()
-                    .map(|p| TopProcessData {
-                        name: p.name.clone().into(),
-                        pid: p.pid as i32,
-                        value: p.value,
-                        value_text: format!("{:.1}", p.value).into(),
-                        memory_mb: p.memory_mb as i32,
-                    })
-                    .collect();
-                ui.set_sys_top_cpu(slint::ModelRc::new(slint::VecModel::from(top_cpu_model)));
+                            // Top processes by CPU
+                            let top_cpu_model: Vec<TopProcessData> = stats
+                                .top_cpu
+                                .iter()
+                                .map(|p| TopProcessData {
+                                    name: p.name.clone().into(),
+                                    pid: p.pid as i32,
+                                    value: p.value,
+                                    value_text: format!("{:.1}", p.value).into(),
+                                    memory_mb: p.memory_mb as i32,
+                                })
+                                .collect();
+                            ui.set_sys_top_cpu(slint::ModelRc::new(slint::VecModel::from(top_cpu_model)));
 
-                // Top processes by RAM
-                let top_ram_model: Vec<TopProcessData> = stats
-                    .top_ram
-                    .iter()
-                    .map(|p| TopProcessData {
-                        name: p.name.clone().into(),
-                        pid: p.pid as i32,
-                        value: p.value,
-                        value_text: format!("{:.1}", p.value).into(),
-                        memory_mb: p.memory_mb as i32,
-                    })
-                    .collect();
-                ui.set_sys_top_ram(slint::ModelRc::new(slint::VecModel::from(top_ram_model)));
+                            // Top processes by RAM
+                            let top_ram_model: Vec<TopProcessData> = stats
+                                .top_ram
+                                .iter()
+                                .map(|p| TopProcessData {
+                                    name: p.name.clone().into(),
+                                    pid: p.pid as i32,
+                                    value: p.value,
+                                    value_text: format!("{:.1}", p.value).into(),
+                                    memory_mb: p.memory_mb as i32,
+                                })
+                                .collect();
+                            ui.set_sys_top_ram(slint::ModelRc::new(slint::VecModel::from(top_ram_model)));
+                        }
+                    });
+                });
             }
         }
     });
@@ -1162,6 +1313,8 @@ async fn main() -> Result<()> {
     // ── Handle tray events ──
     let ui_weak = ui.as_weak();
     let hunter_cmd_tx_clone = hunter_cmd_tx.clone();
+    let tray_handle_clone = tray_handle.clone();
+    let hunter_paused_clone = hunter_paused.clone();
     tokio::spawn(async move {
         while let Some(event) = tray_event_rx.recv().await {
             match event {
@@ -1175,7 +1328,15 @@ async fn main() -> Result<()> {
                     .ok();
                 }
                 TrayEvent::TogglePause => {
-                    let _ = hunter_cmd_tx_clone.send(ProcessHunterCommand::Pause);
+                    let new_paused = !hunter_paused_clone.load(Ordering::Relaxed);
+                    hunter_paused_clone.store(new_paused, Ordering::Relaxed);
+                    let cmd = if new_paused {
+                        ProcessHunterCommand::Pause
+                    } else {
+                        ProcessHunterCommand::Resume
+                    };
+                    let _ = hunter_cmd_tx_clone.send(cmd);
+                    tray_handle_clone.set_pause_label(new_paused);
                 }
                 TrayEvent::Exit => {
                     slint::quit_event_loop().ok();

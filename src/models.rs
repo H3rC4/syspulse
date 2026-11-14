@@ -17,6 +17,7 @@ impl Default for Language {
 }
 
 impl Language {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Language::English => "en",
@@ -24,6 +25,7 @@ impl Language {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "es-AR" | "es" => Language::SpanishArgentina,
@@ -50,6 +52,7 @@ pub struct ProcessEvent {
 pub struct ProcessEntry {
     pub pid: u32,
     pub name: String,
+    #[allow(dead_code)]
     pub executable_path: String,
     pub cpu_percent: f32,
     pub memory_mb: u64,
@@ -93,6 +96,7 @@ pub struct CleanerResult {
 
 #[derive(Debug, Clone, Default)]
 pub struct CoreUsage {
+    #[allow(dead_code)]
     pub name: String,
     pub usage: f32,
 }

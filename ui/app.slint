@@ -277,19 +277,12 @@ component SettingRow inherits HorizontalLayout {
     }
 }
 
-// ── Premium Card Component ──
-component MetricCard inherits Rectangle {
-    background: Theme.card-bg;
-    border-radius: 14px;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-}
-
 // ── Tab components ──
 
 component ProcessHunterTab inherits Rectangle {
     in property <[ProcessEventData]> events: [];
     in-out property <int> selected-id: -1;
+    callback refresh();
     callback export-json(int);
     callback export-csv(int);
 
@@ -309,7 +302,12 @@ component ProcessHunterTab inherits Rectangle {
         HorizontalLayout {
             spacing: 10px;
             NeonButton {
+                text: "Refresh";
+                clicked => { refresh(); }
+            }
+            NeonButton {
                 text: "Export JSON";
+                primary: false;
                 enabled: selected-id >= 0;
                 clicked => { export-json(selected-id); }
             }
@@ -1527,13 +1525,15 @@ export component AppWindow inherits Window {
                 Rectangle { height: 12px; }
 
                 // Section label
-                Text {
-                    text: "NAVIGATION";
-                    font-size: 10px;
-                    font-weight: 600;
-                    letter-spacing: 1.5px;
-                    color: Theme.text-tertiary;
+                HorizontalLayout {
                     padding-left: 16px;
+                    Text {
+                        text: "NAVIGATION";
+                        font-size: 10px;
+                        font-weight: 600;
+                        letter-spacing: 1.5px;
+                        color: Theme.text-tertiary;
+                    }
                 }
                 
                 Rectangle { height: 4px; }
@@ -1577,13 +1577,15 @@ export component AppWindow inherits Window {
                 Rectangle { height: 8px; }
                 
                 // Section label
-                Text {
-                    text: "SYSTEM";
-                    font-size: 10px;
-                    font-weight: 600;
-                    letter-spacing: 1.5px;
-                    color: Theme.text-tertiary;
+                HorizontalLayout {
                     padding-left: 16px;
+                    Text {
+                        text: "SYSTEM";
+                        font-size: 10px;
+                        font-weight: 600;
+                        letter-spacing: 1.5px;
+                        color: Theme.text-tertiary;
+                    }
                 }
                 
                 Rectangle { height: 4px; }
@@ -1660,6 +1662,7 @@ export component AppWindow inherits Window {
             if root.current-tab == 1: ProcessHunterTab {
                 events: root.process-events;
                 selected-id <=> root.selected-process-id;
+                refresh => { root.scan-processes(); }
                 export-json(id) => { root.export-process(id, "json"); }
                 export-csv(id) => { root.export-process(id, "csv"); }
             }

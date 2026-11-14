@@ -113,18 +113,39 @@ pub fn spawn_tray(event_tx: tokio::sync::mpsc::UnboundedSender<TrayEvent>) -> Re
 }
 
 fn load_icon() -> Result<tray_icon::Icon, String> {
-    // Try to load icon.ico from assets directory
-    let icon_path = std::path::Path::new("assets/icon.ico");
-    if icon_path.exists() {
-        let icon_data = std::fs::read(icon_path)
-            .map_err(|e| format!("Failed to read icon.ico: {}", e))?;
-        
-        // Parse ICO file - extract first image (usually 256x256 or 32x32)
-        if let Ok(icon) = parse_ico_to_tray_icon(&icon_data) {
-            return Ok(icon);
+    let candidate_paths = [
+        std::path::PathBuf::from("assets/icon.ico"),
+        std::path::PathBuf::from("icon.ico"),
+    ];
+
+    for path in &candidate_paths {
+        if path.exists() {
+            if let Ok(icon_data) = std::fs::read(path) {
+                if let Ok(icon) = parse_ico_to_tray_icon(&icon_data) {
+                    return Ok(icon);
+                }
+            }
         }
     }
-    
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let exe_candidates = [
+                dir.join("assets/icon.ico"),
+                dir.join("icon.ico"),
+            ];
+            for path in &exe_candidates {
+                if path.exists() {
+                    if let Ok(icon_data) = std::fs::read(path) {
+                        if let Ok(icon) = parse_ico_to_tray_icon(&icon_data) {
+                            return Ok(icon);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Err("Icon file not found or invalid".to_string())
 }
 
@@ -199,7 +220,7 @@ fn parse_ico_to_tray_icon(ico_data: &[u8]) -> Result<tray_icon::Icon, String> {
     }
 }
 
-fn decode_png_to_rgba(png_data: &[u8]) -> Result<tray_icon::Icon, String> {
+fn decode_png_to_rgba(_png_data: &[u8]) -> Result<tray_icon::Icon, String> {
     // Use a simple PNG decoder - for now, fall back to default
     // In production, you'd use the `png` crate
     Err("PNG decoding not implemented".to_string())

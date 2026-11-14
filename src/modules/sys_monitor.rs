@@ -112,7 +112,7 @@ impl SysMonitor {
         let mut processes: Vec<_> = self.system.processes().values().collect();
 
         // Top 5 by CPU
-        processes.sort_by(|a, b| b.cpu_usage().partial_cmp(&a.cpu_usage()).unwrap());
+        processes.sort_by(|a, b| b.cpu_usage().partial_cmp(&a.cpu_usage()).unwrap_or(std::cmp::Ordering::Equal));
         let top_cpu: Vec<TopProcess> = processes
             .iter()
             .take(5)

@@ -90,6 +90,7 @@ impl Settings {
     }
 
     /// Returns the logs directory.
+    #[allow(dead_code)]
     pub fn logs_dir() -> Result<PathBuf> {
         Ok(Self::app_data_dir()?.join("logs"))
     }
@@ -114,7 +115,7 @@ impl Settings {
 #[cfg(target_os = "windows")]
 fn enable_autostart(executable: &std::path::Path) -> Result<()> {
     use windows::Win32::System::Registry::{
-        RegCreateKeyExW, RegSetValueExW, HKEY_CURRENT_USER, KEY_WRITE,
+        RegCreateKeyExW, RegSetValueExW, RegCloseKey, HKEY_CURRENT_USER, KEY_WRITE,
         REG_SZ, REG_OPTION_NON_VOLATILE,
     };
     use windows::Win32::Foundation::ERROR_SUCCESS;
@@ -154,6 +155,8 @@ fn enable_autostart(executable: &std::path::Path) -> Result<()> {
             )),
         );
 
+        let _ = RegCloseKey(key);
+
         if result != ERROR_SUCCESS {
             anyhow::bail!("Failed to set registry run value");
         }
@@ -165,7 +168,7 @@ fn enable_autostart(executable: &std::path::Path) -> Result<()> {
 #[cfg(target_os = "windows")]
 fn disable_autostart() -> Result<()> {
     use windows::Win32::System::Registry::{
-        RegOpenKeyExW, RegDeleteValueW, HKEY_CURRENT_USER, KEY_WRITE,
+        RegOpenKeyExW, RegDeleteValueW, RegCloseKey, HKEY_CURRENT_USER, KEY_WRITE,
     };
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::core::w;
@@ -185,6 +188,7 @@ fn disable_autostart() -> Result<()> {
 
         if result == ERROR_SUCCESS {
             let _ = RegDeleteValueW(key, value_name);
+            let _ = RegCloseKey(key);
         }
     }
 

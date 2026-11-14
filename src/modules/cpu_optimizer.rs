@@ -43,7 +43,7 @@ impl CpuOptimizer {
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_default(),
                     cpu_percent: process.cpu_usage(),
-                    memory_mb: process.memory() / 1024,
+                    memory_mb: process.memory() / 1024 / 1024,
                     focused: self.focused_processes.contains_key(&pid_u32),
                 })
             })
@@ -81,10 +81,9 @@ impl CpuOptimizer {
                 anyhow::bail!("Failed to get process priority class");
             }
 
-            SetPriorityClass(handle, ABOVE_NORMAL_PRIORITY_CLASS)
-                .context("Failed to set priority class")?;
-
+            let res = SetPriorityClass(handle, ABOVE_NORMAL_PRIORITY_CLASS);
             let _ = CloseHandle(handle);
+            res.context("Failed to set priority class")?;
 
             self.focused_processes.insert(
                 pid,
@@ -120,7 +119,7 @@ impl CpuOptimizer {
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn focus(&mut self, pid: u32) -> Result<()> {
         let original = unsafe { libc::getpriority(libc::PRIO_PROCESS, pid as libc::id_t) };
         if original < 0 && std::io::Error::last_os_error().raw_os_error() != Some(0) {
@@ -142,7 +141,7 @@ impl CpuOptimizer {
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn unfocus(&mut self, pid: u32) -> Result<()> {
         let state = self
             .focused_processes
@@ -157,7 +156,7 @@ impl CpuOptimizer {
         Ok(())
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     fn focus(&mut self, pid: u32) -> Result<()> {
         tracing::warn!("CPU Focus is not implemented on this platform (pid={})", pid);
         self.focused_processes.insert(
@@ -169,7 +168,7 @@ impl CpuOptimizer {
         Ok(())
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     fn unfocus(&mut self, pid: u32) -> Result<()> {
         self.focused_processes.remove(&pid);
         Ok(())

@@ -97,6 +97,12 @@ impl ProcessHunter {
 
         let mut paused = false;
         let mut ticker = interval(Duration::from_millis(POLL_INTERVAL_MS));
+        let mut ticks: u64 = 0;
+
+        // Trim history once at startup
+        if let Err(e) = self.trim_history(history_days).await {
+            tracing::error!("Failed to trim process history at startup: {}", e);
+        }
 
         loop {
             tokio::select! {
@@ -105,6 +111,7 @@ impl ProcessHunter {
                         continue;
                     }
 
+                    ticks += 1;
                     system.refresh_processes_specifics(ProcessRefreshKind::everything());
 
                     let mut events = Vec::new();
@@ -139,7 +146,7 @@ impl ProcessHunter {
                     }
 
                     // Detect exited transient processes and remove stale entries.
-                    let current_pids: Vec<u32> = system.processes().keys().map(|p| p.as_u32()).collect();
+                    let current_pids: std::collections::HashSet<u32> = system.processes().keys().map(|p| p.as_u32()).collect();
                     let mut exited = Vec::new();
                     known_processes.retain(|pid, (name, start)| {
                         if current_pids.contains(pid) {
@@ -161,10 +168,16 @@ impl ProcessHunter {
 
                     if !exited.is_empty() {
                         tracing::debug!("Detected {} transient process exits", exited.len());
+                        if let Err(e) = self.update_exited_lifetimes(&exited).await {
+                            tracing::error!("Failed to update process lifetimes: {}", e);
+                        }
                     }
 
-                    if let Err(e) = self.trim_history(history_days).await {
-                        tracing::error!("Failed to trim process history: {}", e);
+                    // Trim history once per hour (7200 ticks of 500ms)
+                    if ticks % 7200 == 0 {
+                        if let Err(e) = self.trim_history(history_days).await {
+                            tracing::error!("Failed to trim process history: {}", e);
+                        }
                     }
                 }
 
@@ -221,6 +234,30 @@ impl ProcessHunter {
         })
         .await
         .context("Failed to spawn DB write task")??;
+
+        Ok(())
+    }
+
+    async fn update_exited_lifetimes(&self, exited: &[(u32, String, u64)]) -> Result<()> {
+        let db = self.db.clone();
+        let exited = exited.to_vec();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = db.blocking_lock();
+            let tx = conn.unchecked_transaction()?;
+
+            for (pid, _name, lifetime) in exited {
+                tx.execute(
+                    "UPDATE process_events SET lifetime_seconds = ?1 WHERE pid = ?2 AND lifetime_seconds IS NULL",
+                    params![lifetime, pid],
+                )?;
+            }
+
+            tx.commit()?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .context("Failed to spawn DB update task")??;
 
         Ok(())
     }

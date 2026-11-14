@@ -1,9 +1,9 @@
-; SysPulse Inno Setup Installer Script v0.3.0
-; Compilar con Inno Setup 6: https://jrsoftware.org/isdl.php
-; Resultado: output/SysPulse-Setup-0.3.0.exe
+; SysPulse Inno Setup Installer Script v0.3.1
+; Compilar con Inno Setup 7: https://jrsoftware.org/isdl.php
+; Resultado: output/SysPulse-Setup-0.3.1.exe
 
 #define MyAppName "SysPulse"
-#define MyAppVersion "0.3.0"
+#define MyAppVersion "0.3.1"
 #define MyAppPublisher "H3rC4"
 #define MyAppURL "https://github.com/H3rC4/syspulse"
 #define MyAppExeName "syspulse.exe"
@@ -26,8 +26,8 @@ SetupIconFile=assets\icon.ico
 UninstallDisplayIcon={app}\icon.ico
 WizardStyle=modern
 PrivilegesRequired=lowest
-ArchitecturesInstallIn64BitMode=x64
-ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
 DisableDirPage=no
 DisableProgramGroupPage=yes
 CreateAppDir=yes
@@ -49,8 +49,6 @@ Name: "startup"; Description: "Iniciar automáticamente con Windows"; GroupDescr
 [Files]
 Source: "target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "locales\en\main.ftl"; DestDir: "{app}\locales\en"; Flags: ignoreversion
-Source: "locales\es-AR\main.ftl"; DestDir: "{app}\locales\es-AR"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "Abrir SysPulse"
@@ -74,6 +72,9 @@ var
   LatestVersion: String;
   DownloadURL: String;
 
+procedure CheckForUpdates(); forward;
+function CompareVersions(v1, v2: String): Integer; forward;
+
 function InitializeSetup(): Boolean;
 begin
   Result := True;
@@ -86,39 +87,48 @@ end;
 
 procedure CheckForUpdates();
 var
-  HttpClient: TWinHttpRequest;
+  WinHttpReq: Variant;
   JsonText: String;
   TagName, AssetUrl: String;
-  PosTag, PosUrl: Integer;
+  Remaining: String;
+  PosTag, PosUrl, EndPos: Integer;
 begin
-  HttpClient := TWinHttpRequest.Create(nil);
   try
-    HttpClient.Open('GET', '{#GitHubAPI}', True);
-    HttpClient.SetRequestHeader('User-Agent', 'SysPulse-Installer');
-    HttpClient.SetRequestHeader('Accept', 'application/vnd.github.v3+json');
-    HttpClient.Send('');
-    HttpClient.WaitForResponse(10);
+    WinHttpReq := CreateOleObject('WinHttp.WinHttpRequest.5.1');
+    WinHttpReq.Open('GET', '{#GitHubAPI}', True);
+    WinHttpReq.SetRequestHeader('User-Agent', 'SysPulse-Installer');
+    WinHttpReq.SetRequestHeader('Accept', 'application/vnd.github.v3+json');
+    WinHttpReq.Send('');
+    WinHttpReq.WaitForResponse(5);
     
-    if HttpClient.Status = 200 then begin
-      JsonText := HttpClient.ResponseText;
+    if WinHttpReq.Status = 200 then begin
+      JsonText := WinHttpReq.ResponseText;
       
       // Extraer tag_name (ej: "v0.3.1")
       PosTag := Pos('"tag_name":"', JsonText);
       if PosTag > 0 then begin
         PosTag := PosTag + 12;
-        TagName := Copy(JsonText, PosTag, Pos('"', JsonText, PosTag) - PosTag);
-        LatestVersion := TagName;
-        
-        // Comparar versiones (simple string compare para v0.x.x)
-        if CompareVersions(TagName, '{#MyAppVersion}') > 0 then begin
-          // Extraer browser_download_url del primer asset .exe
-          PosUrl := Pos('"browser_download_url":"', JsonText);
-          if PosUrl > 0 then begin
-            PosUrl := PosUrl + 22;
-            AssetUrl := Copy(JsonText, PosUrl, Pos('"', JsonText, PosUrl) - PosUrl);
-            if Pos('.exe', AssetUrl) > 0 then begin
-              DownloadURL := AssetUrl;
-              UpdateAvailable := True;
+        Remaining := Copy(JsonText, PosTag, Length(JsonText) - PosTag + 1);
+        EndPos := Pos('"', Remaining);
+        if EndPos > 0 then begin
+          TagName := Copy(Remaining, 1, EndPos - 1);
+          LatestVersion := TagName;
+          
+          // Comparar versiones
+          if CompareVersions(TagName, '{#MyAppVersion}') > 0 then begin
+            // Extraer browser_download_url del primer asset .exe
+            PosUrl := Pos('"browser_download_url":"', JsonText);
+            if PosUrl > 0 then begin
+              PosUrl := PosUrl + 24;
+              Remaining := Copy(JsonText, PosUrl, Length(JsonText) - PosUrl + 1);
+              EndPos := Pos('"', Remaining);
+              if EndPos > 0 then begin
+                AssetUrl := Copy(Remaining, 1, EndPos - 1);
+                if Pos('.exe', AssetUrl) > 0 then begin
+                  DownloadURL := AssetUrl;
+                  UpdateAvailable := True;
+                end;
+              end;
             end;
           end;
         end;
@@ -129,22 +139,32 @@ begin
   end;
 end;
 
+function GetNextVersionPart(var S: String): Integer;
+var
+  P: Integer;
+begin
+  P := Pos('.', S);
+  if P > 0 then begin
+    Result := StrToIntDef(Copy(S, 1, P - 1), 0);
+    S := Copy(S, P + 1, Length(S) - P);
+  end else begin
+    Result := StrToIntDef(S, 0);
+    S := '';
+  end;
+end;
+
 function CompareVersions(v1, v2: String): Integer;
 // Retorna: 1 si v1 > v2, 0 si igual, -1 si v1 < v2
 var
-  Parts1, Parts2: TArrayOfString;
-  i, n1, n2: Integer;
+  n1, n2: Integer;
 begin
   // Remover 'v' prefix si existe
-  if Pos('v', v1) = 1 then v1 := Copy(v1, 2, Length(v1));
-  if Pos('v', v2) = 1 then v2 := Copy(v2, 2, Length(v2));
-  
-  Parts1 := SplitString(v1, '.');
-  Parts2 := SplitString(v2, '.');
-  
-  for i := 0 to GetArrayLength(Parts1) - 1 do begin
-    n1 := StrToIntDef(Parts1[i], 0);
-    n2 := if i < GetArrayLength(Parts2) then StrToIntDef(Parts2[i], 0) else 0;
+  if Pos('v', v1) = 1 then v1 := Copy(v1, 2, Length(v1) - 1);
+  if Pos('v', v2) = 1 then v2 := Copy(v2, 2, Length(v2) - 1);
+
+  while (Length(v1) > 0) or (Length(v2) > 0) do begin
+    n1 := GetNextVersionPart(v1);
+    n2 := GetNextVersionPart(v2);
     if n1 > n2 then begin Result := 1; Exit; end;
     if n1 < n2 then begin Result := -1; Exit; end;
   end;
@@ -174,12 +194,14 @@ begin
 end;
 
 procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
+var
+  ErrorCode: Integer;
 begin
   if CurPageID = wpWelcome then begin
     if UpdateAvailable and (MsgBox('Hay una versión más nueva (' + LatestVersion + ').'#13#10 +
          '¿Quieres cancelar e ir a la página de descargas?', mbConfirmation, MB_YESNO) = IDYES) then begin
       Cancel := False;
-      OpenURL('{#MyAppURL}/releases/latest');
+      ShellExec('open', '{#MyAppURL}/releases/latest', '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode);
       WizardForm.Close;
     end;
   end;
