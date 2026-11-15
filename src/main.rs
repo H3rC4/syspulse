@@ -47,9 +47,28 @@ async fn main() -> Result<()> {
     i18n::set_global_language(settings.language);
 
     // Initialize modules
+    // Initialize Pulse Intelligence Engine (PIE) Event Bus
+    let (event_bus, pie_receiver) = crate::modules::pie::bus::PulseEventBus::new(
+        crate::modules::pie::bus::DEFAULT_CRITICAL_CAPACITY,
+        crate::modules::pie::bus::DEFAULT_TELEMETRY_CAPACITY,
+    );
+
+    // Launch PIE Engine background loop
+    match crate::modules::pie::PulseIntelligenceEngine::new() {
+        Ok(pie_engine) => {
+            tokio::spawn(async move {
+                pie_engine.run_loop(pie_receiver).await;
+            });
+            tracing::info!("Pulse Intelligence Engine (PIE) initialized and running");
+        }
+        Err(e) => {
+            tracing::warn!("Failed to initialize PIE engine: {}", e);
+        }
+    }
+
     let cleaner = Arc::new(Cleaner::new().context("Failed to initialize Cleaner")?);
     let cpu_optimizer = Arc::new(Mutex::new(CpuOptimizer::new()));
-    let sys_monitor = Arc::new(Mutex::new(SysMonitor::new()));
+    let sys_monitor = Arc::new(Mutex::new(SysMonitor::new_with_bus(Some(event_bus.clone()))));
     
     // Shared pause flag for cleaner operations
     let pause_flag = Arc::new(AtomicBool::new(false));
@@ -58,7 +77,7 @@ async fn main() -> Result<()> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
     let (process_hunter, hunter_cmd_rx) =
-        ProcessHunter::new().context("Failed to initialize Process Hunter")?;
+        ProcessHunter::new_with_bus(Some(event_bus.clone())).context("Failed to initialize Process Hunter")?;
     let hunter_cmd_tx = process_hunter.command_sender();
     let process_hunter = Arc::new(process_hunter);
 
@@ -67,6 +86,19 @@ async fn main() -> Result<()> {
     let hunter_task_clone = process_hunter.clone();
     tokio::spawn(async move {
         hunter_task_clone.start(hunter_cmd_rx, history_days).await;
+    });
+
+    // Start Network Guardian background task (Fase 1: Latency & Gateway monitor)
+    let ng_bus = event_bus.clone();
+    tokio::spawn(async move {
+        let mut network_guardian = crate::modules::network_guardian::NetworkGuardian::new(Some(ng_bus));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            if let Err(e) = network_guardian.run_health_check().await {
+                tracing::debug!("Network Guardian background check: {}", e);
+            }
+        }
     });
 
     // Spawn tray

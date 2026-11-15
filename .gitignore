@@ -1,8 +1,14 @@
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
 *.pdb
+
+# Local data & databases
+*.db
+*.db-shm
+*.db-wal
+*.log
+settings.toml
 
 # IDE
 .vscode/

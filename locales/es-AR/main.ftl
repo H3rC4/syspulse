@@ -97,3 +97,26 @@ monitor-uptime = Actividad
 monitor-load-avg = Carga Promedio
 monitor-top-cpu = Top 5 por CPU
 monitor-top-ram = Top 5 por Memoria
+
+# Network Guardian
+tab-network-guardian = Network Guardian
+net-device-this-pc = Tu equipo
+net-device-gateway = Router / Puerta de Enlace
+net-device-vendor = Dispositivo { $vendor }
+net-device-laa = Dirección LAA (Virtual / Privada)
+net-device-unknown = Dispositivo Desconocido
+net-device-trusted = Confiable
+net-device-untrusted = Desconocido
+net-scan-running = Escaneando red...
+net-scan-partial = Escaneo parcial acotado a { $count } hosts
+
+# Pulse Intelligence Engine (PIE)
+pie-title = Centro de Inteligencia y Diagnósticos
+pie-rule-wifi-deg-title = Señal Wi-Fi inestable o muy débil
+pie-rule-ext-down-title = Conexión local activa pero sin acceso a Internet
+pie-rule-rogue-gw-title = Cambio inesperado en la configuración de tu conexión
+pie-rule-ip-conflict-title = Dos dispositivos están usando la misma dirección de red
+pie-rule-high-cpu-title = Una aplicación está sobrecargando el procesador
+pie-rule-mem-pressure-title = La memoria del equipo está casi llena
+pie-rule-sys-saturation-title = Tu equipo está operando al límite de su capacidad
+pie-rule-temp-exec-title = Aplicación no habitual ejecutándose desde carpeta temporal

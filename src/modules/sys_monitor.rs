@@ -8,10 +8,15 @@ pub struct SysMonitor {
     last_network_check: Option<Instant>,
     last_bytes_sent: u64,
     last_bytes_received: u64,
+    event_bus: Option<crate::modules::pie::PulseEventBus>,
 }
 
 impl SysMonitor {
     pub fn new() -> Self {
+        Self::new_with_bus(None)
+    }
+
+    pub fn new_with_bus(event_bus: Option<crate::modules::pie::PulseEventBus>) -> Self {
         let mut system = System::new();
         system.refresh_all();
 
@@ -24,7 +29,13 @@ impl SysMonitor {
             last_network_check: Some(Instant::now()),
             last_bytes_sent,
             last_bytes_received,
+            event_bus,
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn set_event_bus(&mut self, bus: crate::modules::pie::PulseEventBus) {
+        self.event_bus = Some(bus);
     }
 
     pub fn refresh(&mut self) -> SystemStats {
@@ -125,7 +136,7 @@ impl SysMonitor {
             .collect();
 
         // Top 5 by RAM
-        processes.sort_by(|a, b| b.memory().cmp(&a.memory()));
+        processes.sort_by_key(|b| std::cmp::Reverse(b.memory()));
         let top_ram: Vec<TopProcess> = processes
             .iter()
             .take(5)
@@ -136,6 +147,69 @@ impl SysMonitor {
                 memory_mb: p.memory() / 1024 / 1024,
             })
             .collect();
+
+        // Emitir telemetría al Event Bus de PIE si está conectado
+        if let Some(bus) = &self.event_bus {
+            let logical_cpus = self.system.cpus().len().max(1) as f32;
+            let top = top_cpu.first().map(|p| (p.pid, p.name.clone(), p.value / logical_cpus, p.value));
+            bus.emit_telemetry(crate::modules::pie::TelemetryEvent::CpuLoad {
+                global_usage: cpu_usage,
+                top_process: top,
+            });
+
+            let mem_percent = if total_memory > 0 {
+                (used_memory as f32 / total_memory as f32) * 100.0
+            } else {
+                0.0
+            };
+
+            let top_proc_mem: Vec<_> = top_ram
+                .iter()
+                .take(5)
+                .map(|p| {
+                    let start_time_utc = crate::modules::pie::get_process_identity(p.pid)
+                        .map(|id| id.start_time_utc)
+                        .unwrap_or(0);
+                    (
+                        crate::modules::pie::ProcessIdentity::new(p.pid, start_time_utc),
+                        p.name.clone(),
+                        p.value as u64,
+                    )
+                })
+                .collect();
+
+            bus.emit_telemetry(crate::modules::pie::TelemetryEvent::MemoryPressure {
+                used_bytes: used_memory,
+                total_bytes: total_memory,
+                usage_percent: mem_percent,
+                top_processes: top_proc_mem,
+            });
+
+            bus.emit_telemetry(crate::modules::pie::TelemetryEvent::NetworkThroughput {
+                rx_bytes_sec: (down_bps / 8.0) as u64,
+                tx_bytes_sec: (up_bps / 8.0) as u64,
+            });
+
+            for t in &temps {
+                let lbl = t.label.to_lowercase();
+                let thresh = if lbl.contains("nvme") || lbl.contains("disk") || lbl.contains("drive") {
+                    70.0
+                } else if lbl.contains("gpu") {
+                    88.0
+                } else if lbl.contains("cpu") || lbl.contains("core") || lbl.contains("package") {
+                    90.0
+                } else {
+                    85.0
+                };
+
+                if t.temperature > thresh {
+                    bus.emit_telemetry(crate::modules::pie::TelemetryEvent::ThermalAlert {
+                        sensor_label: t.label.clone(),
+                        temp_celsius: t.temperature,
+                    });
+                }
+            }
+        }
 
         SystemStats {
             cpu_usage,

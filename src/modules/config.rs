@@ -6,6 +6,10 @@ use std::path::PathBuf;
 const APP_NAME: &str = "SysPulse";
 const CONFIG_FILE: &str = "settings.toml";
 
+fn default_net_metrics_retention_days() -> u32 {
+    7
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub language: Language,
@@ -15,6 +19,8 @@ pub struct Settings {
     pub process_history_days: u32,
     pub quarantine_days: u32,
     pub permanent_delete: bool,  // NUEVO: eliminar permanentemente sin usar papelera
+    #[serde(default = "default_net_metrics_retention_days")]
+    pub net_metrics_retention_days: u32,
 }
 
 impl Default for Settings {
@@ -27,6 +33,7 @@ impl Default for Settings {
             process_history_days: 30,
             quarantine_days: 7,
             permanent_delete: false,  // Default seguro: usar papelera
+            net_metrics_retention_days: 7,
         }
     }
 }

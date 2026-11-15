@@ -97,3 +97,27 @@ monitor-uptime = Uptime
 monitor-load-avg = Load Average
 monitor-top-cpu = Top 5 by CPU
 monitor-top-ram = Top 5 by Memory
+
+# Network Guardian
+tab-network-guardian = Network Guardian
+net-device-this-pc = This PC
+net-device-gateway = Router / Gateway
+net-device-vendor = { $vendor } Device
+net-device-laa = LAA Address (Virtual / Private)
+net-device-unknown = Unknown Device
+net-device-trusted = Trusted
+net-device-untrusted = Unknown
+net-scan-running = Scanning network...
+net-scan-partial = Partial scan bounded to { $count } hosts
+
+# Pulse Intelligence Engine (PIE)
+pie-title = Intelligence & Incident Center
+pie-rule-wifi-deg-title = Unstable or Weak Wi-Fi Signal
+pie-rule-ext-down-title = Local Connection Active but No Internet Access
+pie-rule-rogue-gw-title = Unexpected Gateway or Topology Change
+pie-rule-ip-conflict-title = Two Devices Sharing the Same Local IP Address
+pie-rule-high-cpu-title = An Application is Overloading the Processor
+pie-rule-mem-pressure-title = System Physical Memory is Nearly Full
+pie-rule-sys-saturation-title = System Operating at Hardware Limits
+pie-rule-temp-exec-title = Unverified Application Executing from Temp Directory
+

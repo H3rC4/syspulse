@@ -36,10 +36,18 @@ impl ExportFormat {
 pub struct ProcessHunter {
     db: Arc<Mutex<Connection>>,
     command_tx: mpsc::UnboundedSender<ProcessHunterCommand>,
+    event_bus: Option<crate::modules::pie::PulseEventBus>,
 }
 
 impl ProcessHunter {
+    #[allow(dead_code)]
     pub fn new() -> Result<(Self, mpsc::UnboundedReceiver<ProcessHunterCommand>)> {
+        Self::new_with_bus(None)
+    }
+
+    pub fn new_with_bus(
+        event_bus: Option<crate::modules::pie::PulseEventBus>,
+    ) -> Result<(Self, mpsc::UnboundedReceiver<ProcessHunterCommand>)> {
         let db_path = crate::modules::config::Settings::db_path()?;
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)
@@ -76,6 +84,7 @@ impl ProcessHunter {
             Self {
                 db: Arc::new(Mutex::new(conn)),
                 command_tx: tx,
+                event_bus,
             },
             rx,
         ))
@@ -132,6 +141,32 @@ impl ProcessHunter {
 
                             known_processes.insert(pid_u32, (name.clone(), now));
 
+                            // Emitir evento al Event Bus de PIE
+                            if let Some(bus) = &self.event_bus {
+                                let start_time_utc = crate::modules::pie::get_process_identity(pid_u32)
+                                    .map(|id| id.start_time_utc)
+                                    .unwrap_or_else(|| process.start_time());
+
+                                let identity = crate::modules::pie::ProcessIdentity::new(pid_u32, start_time_utc);
+
+                                let _ = bus.try_emit_critical(crate::modules::pie::PulseCriticalEvent::ProcessSpawned {
+                                    process: identity,
+                                    parent_pid: process.parent().map(|p| p.as_u32()),
+                                    name: name.clone(),
+                                    executable_path: exe.clone(),
+                                    command_line: cmd.clone(),
+                                });
+
+                                let lower_exe = exe.to_lowercase();
+                                if lower_exe.contains("\\temp\\") || lower_exe.contains("/temp/") || lower_exe.contains("\\appdata\\local\\temp\\") {
+                                    let _ = bus.try_emit_critical(crate::modules::pie::PulseCriticalEvent::UntrustedExecutionLocation {
+                                        process: identity,
+                                        executable_path: exe.clone(),
+                                        location_type: "Temp".to_string(),
+                                    });
+                                }
+                            }
+
                             events.push(ProcessEvent {
                                 id: None,
                                 timestamp: Local::now(),
@@ -168,6 +203,18 @@ impl ProcessHunter {
 
                     if !exited.is_empty() {
                         tracing::debug!("Detected {} transient process exits", exited.len());
+
+                        if let Some(bus) = &self.event_bus {
+                            for (pid, name, lifetime) in &exited {
+                                let _ = bus.try_emit_critical(crate::modules::pie::PulseCriticalEvent::TransientProcessDetected {
+                                    process: crate::modules::pie::ProcessIdentity::new(*pid, 0),
+                                    name: name.clone(),
+                                    executable_path: String::new(),
+                                    lifetime_seconds: *lifetime,
+                                });
+                            }
+                        }
+
                         if let Err(e) = self.update_exited_lifetimes(&exited).await {
                             tracing::error!("Failed to update process lifetimes: {}", e);
                         }

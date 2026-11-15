@@ -2,18 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Supported application languages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Language {
-    #[serde(rename = "en")]
+    #[serde(rename = "en", alias = "English")]
+    #[default]
     English,
-    #[serde(rename = "es-AR")]
+    #[serde(rename = "es-AR", alias = "SpanishArgentina", alias = "es")]
     SpanishArgentina,
-}
-
-impl Default for Language {
-    fn default() -> Self {
-        Language::English
-    }
 }
 
 impl Language {
