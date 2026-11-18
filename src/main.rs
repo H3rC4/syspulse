@@ -130,12 +130,12 @@ async fn main() -> Result<()> {
         ui.hide().ok();
     }
 
-    // Cleanup old quarantine entries
-    tracing::info!("Purging old quarantine...");
+    // Cleanup old quarantine entries (temporarily suspended by security audit A11.09)
+    tracing::info!("Quarantine auto-purge check (temporarily suspended by security audit A11.09)...");
     if let Err(e) = cleaner.purge_old_quarantine(settings.quarantine_days) {
-        tracing::error!("Failed to purge old quarantine: {}", e);
+        tracing::warn!("Failed to check quarantine purge: {}", e);
     }
-    tracing::info!("Purge complete");
+    tracing::info!("Quarantine check complete (containment active: 0 files deleted)");
     tracing::info!("Setting up callbacks...");
 
     // ── Callback: Reset Scan ──
@@ -723,7 +723,7 @@ async fn main() -> Result<()> {
                                                 original_path: e.original_path.to_string_lossy().to_string().into(),
                                                 quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
                                                 size: modules::cleaner::format_bytes(e.size).into(),
-                                                quarantined_at: e.quarantined_at.format("%Y-%m-%d %H:%M").to_string().into(),
+                                                quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
                                             })
                                             .collect::<Vec<_>>(),
                                     ));
@@ -795,7 +795,7 @@ async fn main() -> Result<()> {
                                         original_path: e.original_path.to_string_lossy().to_string().into(),
                                         quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
                                         size: modules::cleaner::format_bytes(e.size).into(),
-                                        quarantined_at: e.quarantined_at.format("%Y-%m-%d %H:%M").to_string().into(),
+                                        quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
                                     })
                                     .collect::<Vec<_>>(),
                             ));
@@ -861,7 +861,7 @@ async fn main() -> Result<()> {
                                     original_path: e.original_path.to_string_lossy().to_string().into(),
                                     quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
                                     size: modules::cleaner::format_bytes(e.size).into(),
-                                    quarantined_at: e.quarantined_at.format("%Y-%m-%d %H:%M").to_string().into(),
+                                    quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
                                 })
                                 .collect::<Vec<_>>(),
                         ));
@@ -898,7 +898,7 @@ async fn main() -> Result<()> {
                                     original_path: e.original_path.to_string_lossy().to_string().into(),
                                     quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
                                     size: modules::cleaner::format_bytes(e.size).into(),
-                                    quarantined_at: e.quarantined_at.format("%Y-%m-%d %H:%M").to_string().into(),
+                                    quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
                                 })
                                 .collect::<Vec<_>>(),
                         ));
@@ -935,7 +935,7 @@ async fn main() -> Result<()> {
                                     original_path: e.original_path.to_string_lossy().to_string().into(),
                                     quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
                                     size: modules::cleaner::format_bytes(e.size).into(),
-                                    quarantined_at: e.quarantined_at.format("%Y-%m-%d %H:%M").to_string().into(),
+                                    quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
                                 })
                                 .collect::<Vec<_>>(),
                         ));

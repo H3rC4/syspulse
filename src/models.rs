@@ -73,7 +73,7 @@ pub struct DuplicateFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuarantineEntry {
     pub id: Option<i64>,
-    pub quarantined_at: chrono::DateTime<chrono::Local>,
+    pub quarantined_at: Option<chrono::DateTime<chrono::Local>>,
     pub original_path: PathBuf,
     pub quarantine_path: PathBuf,
     pub size: u64,

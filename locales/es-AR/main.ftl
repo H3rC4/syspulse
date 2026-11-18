@@ -46,7 +46,7 @@ cleaner-cleaning = Limpiando...
 cleaner-no-duplicates = No se encontraron duplicados.
 cleaner-select-folder = Seleccionar carpeta
 cleaner-smart-select = Selección Inteligente
-cleaner-quarantine-days = Auto-eliminar cuarentena después de { $days } días
+cleaner-quarantine-days = Retención de cuarentena: { $days } días (purga automática suspendida temporalmente)
 
 # CPU Focus
 cpu-focus-title = Enfoque CPU
@@ -65,7 +65,7 @@ settings-theme = Tema
 settings-dark-mode = Modo oscuro
 settings-start-with-os = Iniciar con el sistema operativo
 settings-history-days = Retención del historial de procesos (días)
-settings-quarantine-days = Retención de cuarentena (días)
+settings-quarantine-days = Retención de cuarentena (días) (purga automática suspendida)
 settings-check-updates = Buscar actualizaciones
 settings-version = Versión { $version }
 

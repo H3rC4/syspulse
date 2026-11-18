@@ -1,7 +1,7 @@
 # SysPulse — Documento Permanente de Estado y Continuidad de Contexto
 
 **Ubicación:** `planes/ESTADO_ACTUAL.md`  
-**Última actualización:** 15 de noviembre de 2026 (Fase 4: Subtareas 4.1, 4.2 y 4.3 Completadas provisionalmente; Listo para auditoría externa en rama develop/v0.4.0)  
+**Última actualización:** 18 de noviembre de 2026 (Auditoría A11: Bloques 1, 2A y 2B ejecutados; A11.04 pendiente; Bloque 2C no autorizado)
 **Rama activa:** `develop/v0.4.0`  
 **Versión de producción:** v0.3.1 (Setup oficial generado: `output/SysPulse-Setup-0.3.1.exe`)  
 **Versión en desarrollo:** v0.4.0 (PIE Core & Network Guardian)  
@@ -19,9 +19,9 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 | Componente | Estado | Notas Técnicas |
 |---|---|---|
-| **Compilación Rust** | ✅ 0 errores, 0 warnings en módulos nuevos | Verificado con `cargo check` y `cargo test` (45 tests pasando en 0.81s). Clippy limpio en `pie`, `network_guardian` y `models`. |
+| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (73 tests unitarios pasando). |
 | **System Monitor** | ✅ Completado | Desacoplado asíncronamente con Tokio (60+ FPS fluidos en Slint). Emisión de telemetría a PIE (`CpuLoad`, `MemoryPressure`, `NetworkThroughput`, `ThermalAlert`). |
-| **Smart Cleaner** | ✅ Completado | Limpieza rápida con bypass opcional de Papelera; buscador de duplicados con **pre-hashing a 16 KB** y búfer de 64 KB; cuarentena con manifiesto JSON reactiva. |
+| **Smart Cleaner** | 🟡 Bloques 2A/2B completados; purga suspendida | Manifiesto v2 atómico, bloqueo entre procesos y transacciones de cuarentena/restauración con staging, SHA-256, no-replace, recuperación `Staged`/`Restoring` y validación de rutas/reparse. A11.04 (duplicados) sigue pendiente. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). 28 pruebas de cleaner/cuarentena (73 totales en workspace). |
 | **CPU Focus** | ✅ Completado | Prioridad `ABOVE_NORMAL_PRIORITY_CLASS` (Win32) y memoria en MB reales. |
 | **Process Hunter** | ✅ Completado | Registro forense continuo en SQLite (`syspulse.db`), cálculo de tiempo de vida en procesos transitorios (< 5s), purga horaria y exportación a JSON/CSV. Emisión de eventos a PIE (`ProcessSpawned`, `UntrustedExecutionLocation`, `TransientProcessDetected`). |
 | **System Tray & Ajustes** | ✅ Completado | Minimizar a bandeja, autoarranque en Registro (`HKCU\...\Run`), detección robusta de `icon.ico`. Retención de métricas de red configurable (`net_metrics_retention_days`). |
@@ -70,8 +70,8 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 ## 4. Resultados de Validación Técnica
 
 - **`cargo check`:** ✅ 0 errores, 0 advertencias en todo el workspace.
-- **`cargo test`:** ✅ 45 pruebas unitarias pasando (18 de Network Guardian + 27 de PIE Core) en 0.81s.
-- **`cargo clippy --all-targets`:** ✅ Módulos nuevos (`network_guardian`, `pie`, `models`) 100% limpios de advertencias.
+- **`cargo test`:** ✅ 73 pruebas unitarias pasando (0 fallos, 0 ignoradas) en Windows `x86_64-pc-windows-msvc`.
+- **`cargo clippy --all-targets`:** ✅ 0 errores; 12 advertencias únicas preexistentes (4 de cleaner, 1 de process_hunter, 3 de tray, 4 de main), sin advertencias nuevas introducidas por B2.
 
 ---
 
@@ -87,6 +87,11 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 - `rules.rs`: 8 reglas de correlación completas con explicabilidad para Modo Simple y Avanzado (sin afirmaciones de malware, throttling ni fugas de memoria sin evidencia).
 - `engine.rs`: Migración versionada v3 (`PRAGMA user_version = 3`), evaluación en tiempo real de las 7 reglas prioritarias, duración configurable de CPU (15–30s), seguimiento acotado de consumo de procesos con `ProcessIdentity`, alertas térmicas diferenciadas por sensor, deduplicación entre reinicios, debouncing de evidencias (10s), resolución e histéresis automáticas.
 - `tests.rs`: 27 pruebas unitarias completas de PIE (pruebas positivas y negativas por regla, histéresis, resolución, deduplicación entre reinicios, debouncing, aislamiento de red, confirmación de CPU, crecimiento de memoria y sensores térmicos).
+
+### Smart Cleaner / Auditoría A11:
+- `src/modules/cleaner.rs`: manifiesto v2 atómico, bloqueo entre procesos, validación de rutas/reparse, transacciones de cuarentena y restauración con staging, SHA-256, no-replace, recuperación `Staged`/`Restoring` y 18 pruebas de regresión nuevas.
+- `Cargo.toml`: features Win32 `Win32_Storage_FileSystem` y `Win32_System_IO`; sin dependencias nuevas.
+- `planes/AUDITORIA_V0.4.0.md`, `planes/ESTADO_ACTUAL.md`, `planes/PLAN_DE_ACCION.md`: estado de Bloques 1, 2A/2B, cobertura y riesgos residuales.
 
 ### Módulo Network Guardian (`src/modules/network_guardian/`):
 - `mod.rs`: Emisión de telemetría de latencia desagregando `gateway_rtt_ms` e `internet_rtt_ms`, y validación estricta de contexto antes y después de cada escaneo y medición (`run_device_scan`, `run_health_check`, `run_wifi_check`).
@@ -130,24 +135,35 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 ---
 
-## 7. Próxima Tarea Exacta (Fase 4: Subtarea 4.4 - Exportador Forense Unificado para IA)
+## 7. Auditoría Externa v0.4.0 (ChatGPT) y Resolución Controlada de A11
 
-**Subtareas de la Fase 4:**
-- [x] **Subtarea 4.1: Creación de tablas y modelos en `syspulse.db` (Alternativa D Aprobada)**
-- [x] **Subtarea 4.2: Conexión de persistencia y deduplicación entre reinicios**
-- [x] **Subtarea 4.3: Motor de Correlación Heurística en PIE**
-- [ ] **Subtarea 4.4: Exportador Forense Unificado para IA:**
-  - Generación de reportes estructurados en JSON y CSV de incidentes y evidencias correlacionadas de red y procesos.
+- **Documento de Auditoría:** [planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md) (Contiene los **20 hallazgos originales A01–A20** y el desglose de los **16 subhallazgos A11.01–A11.16** de Smart Cleaner).
+- **Directivas Permanentes:** [AGENTS.md](file:///D:/proyectos/SysPulse/AGENTS.md) (Normas inmutables de desarrollo, optimización de tokens, no regresión y contraste previo).
+- **Decisiones de Revisión Independiente:**
+  - Prioridad inmediata: A11.09 (riesgo de pérdida automática de datos).
+  - Rechazo de propuesta simplista en A11.11 (no invertir simplemente orden de movimiento y manifiesto para no generar archivos huérfanos).
+  - Insuficiencia técnica de tamaño/mtime/pre-hash ante TOCTOU en A11.04.
+  - Insuficiencia de `exists()` antes de `rename()` ante carreras en A11.08.
+  - Diferenciación estricta entre fallo de restauración funcional y pérdida irreversible en A11.10.
+  - Verificación de cobertura real en A11.16.
+- **Estado de A11.09:** **CONTENIDO TEMPORALMENTE** (Bloque 1 completado exitosamente: purga automática desactivada, preservación íntegra de archivos y manifiestos, trazabilidad explícita en logging e i18n, sin fechas estimadas).
+- **Resultado de Bloques 2A/2B:** `cargo check` limpio, 73 tests pasando y sin advertencias nuevas de clippy. Cuarentena/restauración transaccional con staging, SHA-256, no-replace, recuperación tras fallos y bloqueo entre procesos. A11.04 (duplicados) permanece pendiente; Bloque 2C no autorizado.
+- **Secuencia de Trabajo Planificada para A11:**
+  - **Bloque 1:** Contención inmediata A11.09 — ✅ COMPLETADO (CONTENIDO TEMPORALMENTE).
+  - **Bloque 2:** Integridad, persistencia y restauración de cuarentena — 🟡 2A/2B COMPLETADOS; A11.04 pendiente.
+  - **Bloque 3:** Seguridad de rutas y duplicados — 🟡 PENDIENTE.
+  - **Bloque 4:** Seguridad de interfaz — 🟡 PENDIENTE.
+  - **Bloque 5:** Validación integral — 🟡 PENDIENTE.
 
 ---
 
-## 8. Instrucciones para Retomar en la Próxima Sesión
+## 8. Instrucciones Exactas para Retomar en la Próxima Sesión
 
-1. Leer directamente este archivo (`planes/ESTADO_ACTUAL.md`).
-2. **No re-auditar el código ni recorrer el árbol de archivos.**
-3. Ejecutar `cargo check` y `cargo test` para confirmar el estado limpio (39 tests pasando).
-4. Proceder con la **Subtarea 4.4** y actualizar el checkpoint al concluir.
-5. No avanzar a fases no autorizadas (Fase 5: UI Slint Neón) ni realizar commit o push.
+1. Leer directamente este archivo (`planes/ESTADO_ACTUAL.md`), [AGENTS.md](file:///D:/proyectos/SysPulse/AGENTS.md) y [planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md).
+2. **Rama activa:** Mantenerse en `develop/v0.4.0`.
+3. **Próxima tarea a autorizar:** **Bloque 3 de A11** (seguridad de rutas y duplicados). A11.04 permanece pendiente y requiere autorización específica; Bloque 2C no está autorizado.
+4. **No iniciar la Subtarea 4.4** ni fases posteriores (Fase 5) hasta concluir los bloques de seguridad autorizados de Smart Cleaner.
+5. No modificar código sin autorización previa ni realizar commit/push.
 
 ---
 
@@ -158,3 +174,4 @@ Las siguientes pruebas con hardware real quedan registradas para ejecutarse una 
 2. **Wi-Fi Analyzer:** Cotejo de intensidad de señal (%) y SSID con la bandeja del sistema de Windows, y prueba en Modo Avión.
 3. **Dispositivos:** Escaneo en red doméstica real verificando detección de router, smartphones, consolas y Smart TVs con fabricantes reales.
 4. **Usabilidad:** Validación de claridad en Modo Simple para usuarios sin conocimientos técnicos.
+5. **Smart Cleaner:** Verificar en Windows real cuarentena/restauración en mismo volumen y cross-volume, reparse points y recuperación tras cierre forzado, una vez integrada la UI.

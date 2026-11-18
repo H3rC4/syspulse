@@ -189,6 +189,18 @@ flowchart TD
       11. `OUI & LAA Classification`: Detección estricta de MAC LAA y registro del requisito obligatorio previo a publicación final sobre la base OUI de la IEEE.
     - Deduplicación de incidentes y evidencias entre reinicios (`correlation_key` y caché activa), debouncing de evidencias (10s), resolución automática de incidentes por normalización de condiciones y preparación para Modo Simple y Avanzado (Fluent EN / ES-AR).
     - Suite completa con 24 pruebas unitarias en PIE (45 pruebas totales en el workspace).
+  - [ ] **Resolución y Verificación de Auditoría Externa v0.4.0 (ChatGPT):**
+    - Contrastación técnica de los 20 hallazgos originales ([planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md)) contra el código fuente real.
+    - Desglose del Hallazgo A11 (Smart Cleaner & Cuarentena) en 16 subhallazgos (A11.01–A11.16).
+    - Plan de resolución en 5 bloques secuenciales controlados:
+      - [x] **Bloque 1: Contención inmediata A11.09:** Desactivación de purga automática insegura basada en `mtime`, preservación total de archivos y manifiestos, trazabilidad en logging/i18n. Estado: **CONTENIDO TEMPORALMENTE**. 4 tests unitarios aislados agregados (49 tests totales).
+      - [ ] **Bloque 2: Integridad, persistencia y restauración de cuarentena:**
+        - [x] **Bloque 2A:** Manifiesto v2 retrocompatible con v1, respaldo `manifest.v1.bak`, persistencia atómica exclusiva con `sync_all`, recuperación conservadora ante corrupción/ambigüedad, validación de claves y rutas, y concurrencia serializada. 6 tests unitarios nuevos (55 tests totales).
+        - [x] **Bloque 2B:** Transferencia en fases con staging exclusivo, `sync_all`, SHA-256 y revalidación de identidad antes de eliminar el origen (A11.07, A11.11); restauración atómica sin sobrescritura y errores diferenciados (A11.08, A11.10); recuperación `Staged`/`Restoring` y bloqueo entre procesos. 18 tests nuevos (28 de cleaner; 73 totales). Retención UTC registrada, pero la purga sigue suspendida (A11.09).
+        - [ ] **Pendiente del Bloque 2:** A11.04 (integridad/TOCTOU en detección de duplicados), no incluido en B2B. Bloque 2C no autorizado.
+      - [ ] **Bloque 3: Seguridad de rutas y duplicados:** Prevención de colisiones, cruce de enlaces/junctions, canonicalización y mitigación TOCTOU (A11.01, A11.02, A11.03, A11.06, A11.14).
+      - [ ] **Bloque 4: Seguridad de interfaz:** Sincronización de retención en Slint e i18n Fluent sin falsas promesas (A11.15).
+      - [ ] **Bloque 5: Validación integral:** Cobertura de pruebas de estrés, fallos y escenarios reales aislados (A11.16).
   - [ ] **Subtarea 4.4: Exportador Forense Unificado para IA:**
     - Exportador unificado de incidentes y evidencias a JSON estructurado y CSV para IA.
 - [ ] **Fase 5: UI Slint Neón y Correlación con Process Hunter**

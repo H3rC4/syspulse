@@ -47,6 +47,8 @@ windows = { version = "0.54", features = [
     "Win32_NetworkManagement_Ndis",
     "Win32_NetworkManagement_WiFi",
     "Win32_Networking_WinSock",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
 ] }
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]

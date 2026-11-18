@@ -779,8 +779,15 @@ component SettingsTab inherits Rectangle {
                 Rectangle { height: 1px; background: Theme.border-subtle; }
 
                 SettingRow {
-                    label: "Quarantine retention (days)";
+                    label: "Quarantine retention (days) [Paused]";
                     Slider { value <=> quarantine-days; minimum: 1; maximum: 90; }
+                }
+
+                Text {
+                    text: "\u{2139} Auto-purge suspended for security audit. Quarantine files are preserved.";
+                    color: Theme.text-secondary;
+                    font-size: 11px;
+                    wrap: word-wrap;
                 }
 
                 Rectangle { height: 1px; background: Theme.border-subtle; }
