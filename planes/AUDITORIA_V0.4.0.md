@@ -66,7 +66,7 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
 | **A11.13** | Manifiesto carente de metadatos indispensables (`quarantined_at`, hash original verificado, tamaño validado, atributos). | Corregido en B2A/B2B | Bloque 2 |
 | **A11.14** | Heurística frágil de reconstrucción de rutas originales (`split("_0_")`) con riesgo de corrupción o escape de rutas. | Pendiente de corrección | Bloque 3 |
 | **A11.15** | Promesa en UI / textos de retención automática de días que no se aplica o se aplica de forma destructiva insegura. | Pendiente de corrección | Bloque 4 |
-| **A11.16** | Cobertura insuficiente de pruebas automatizadas sobre el ciclo de vida de cuarentena, manifiesto y duplicados. | En progreso (28 tests de cleaner; 73 totales) | Bloque 5 |
+| **A11.16** | Cobertura insuficiente de pruebas automatizadas sobre el ciclo de vida de cuarentena, manifiesto y duplicados. | En progreso (35 tests de cleaner; 80 totales) | Bloque 5 |
 
 ---
 
@@ -90,12 +90,13 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
      - Validación rigurosa de claves (anti-traversal, sin separadores de ruta ni colisiones de control) y rutas originales (sin auto-inclusión en directorio de cuarentena).
      - Purga automática permanece suspendida (A11.09 CONTENIDO TEMPORALMENTE).
      - 6 pruebas unitarias nuevas aisladas agregadas (10 pruebas unitarias de cleaner en total).
-   - **Bloque 2B (EJECUTADO):**
+   - **Bloque 2B (EJECUTADO con revisiones R01–R05/R07 integradas):**
      - Transferencia física atómica en fases con copia exclusiva a staging, `sync_all`, verificación SHA-256 y revalidación de identidad antes de eliminar el origen (A11.07, A11.11).
      - Restauración atómica sin sobrescritura mediante destino exclusivo/no-replace, verificación SHA-256 y errores diferenciados para destino existente, origen alterado, fallo de verificación y ausencia transitoria (A11.08, A11.10).
      - Recuperación transaccional de estados `Staged`/`Restoring` al iniciar y antes de cada operación; ante incertidumbre se conservan ambas copias.
-     - Bloqueo entre procesos, validación de reparse points y rechazo de rutas de origen dentro de la cuarentena.
-     - 18 pruebas nuevas (28 de cleaner; 73 totales). La purga automática sigue suspendida (A11.09), por lo que la retención UTC aún no se aplica.
+     - Bloqueo entre procesos (`QuarantineProcessLock`), validación de reparse points y rechazo de rutas de origen dentro de la cuarentena.
+     - Corrección y blindaje de hallazgos de revisión R01–R05 y R07; preservación estricta de semántica de Papelera en `delete_quarantine_permanently`.
+     - 25 pruebas de B2B (35 pruebas de cleaner en total; 80 totales en workspace). La purga automática sigue suspendida (A11.09).
    - **Pendiente del Bloque 2:** A11.04 (integridad/TOCTOU en detección de duplicados), no incluido en el alcance autorizado de B2B.
    - **Bloque 2C:** No autorizado ni iniciado.
 3. **Bloque 3: Seguridad de rutas y duplicados (PENDIENTE)**
@@ -105,5 +106,22 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
 4. **Bloque 4: Seguridad de interfaz (PENDIENTE)**
    - Ajuste definitivo de sliders, mensajes y reactividad en Slint Neón.
    - Internacionalización Fluent sincronizada en EN y ES-AR.
+   - Tratamiento de R06 (promesa de retención y sliders en UI).
 5. **Bloque 5: Validación integral (PENDIENTE)**
    - Suite completa de pruebas de estrés, escenarios de fallo de disco y cobertura unitaria/integración.
+
+---
+
+## 5. Registro Separado de Revisiones Técnicas de Bloque 2B (R01 – R07)
+
+| ID | Área / Requisito Técnico | Estado en Bloque 2B | Resolución / Notas |
+|---|---|:---:|---|
+| **R01** | Bloqueo de nombres reservados DOS y extensiones con superíndices (`COM1-9¹²³`, `LPT1-9¹²³`). | ✅ Corregido | Incorporado en `validate_windows_component` con chequeo de caracteres Unicode. |
+| **R02** | Bloqueo exclusivo entre procesos sobre directorio de cuarentena para prevenir colisiones concurrentes. | ✅ Corregido | Implementado `QuarantineProcessLock` mediante Win32 `LockFileEx` (`LOCKFILE_FAIL_IMMEDIATELY`). |
+| **R03** | Identidad unívoca de archivo vía handle Win32 y movimiento atómico `FileRenameInfo` sin reemplazo. | ✅ Corregido | Implementado `LockedFile` (`BY_HANDLE_FILE_INFORMATION`, `FileRenameInfo` con `ReplaceIfExists = FALSE`). |
+| **R04** | Preservación de Alternate Data Streams (ADS NTFS), atributos y descriptores de seguridad en transferencias cross-volume. | ✅ Corregido | Copia exhaustiva vía `FindFirstStreamW`/`FindNextStreamW`, `GetFileSecurityW`/`SetFileSecurityW` y `SetFileAttributesW`. |
+| **R05** | Transaccionalidad de staging y recuperación fail-closed ante identidades de staging no verificables. | ✅ Corregido | `QuarantineTransaction` en `QuarantineRecordV2` con rechazo conservador ante staging sin identidad registrada. |
+| **R06** | Sincronización de retención en Slint UI e i18n sin emitir falsas promesas de purga automática. | 🟡 Pendiente | Reservado para Bloque 4 (Seguridad de interfaz). Purga automática continúa suspendida. |
+| **R07** | Protección incondicional del respaldo `manifest.v1.bak` y fail-closed en errores de enumeración de directorio. | ✅ Corregido | Verificación de preexistencia de backup v1 y propagación de errores de lectura de directorio sin asumir vacío. |
+
+> **Nota de Seguridad sobre Eliminación:** En `delete_quarantine_permanently` se rechazó y revirtió la eliminación física irreversible introducida sin autorización, restableciendo la delegación segura a la Papelera de Reciclaje de Windows (`trash::delete`) con verificación previa de clave, registro en manifiesto y reparse points.

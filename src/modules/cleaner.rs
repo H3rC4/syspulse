@@ -4,27 +4,43 @@ use chrono::{Local, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-#[cfg(not(windows))]
-use std::time::SystemTime;
 use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt as WindowsMetadataExt;
 #[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
-use windows::Win32::Foundation::{FILETIME, HANDLE};
+use windows::Win32::Foundation::{
+    BOOLEAN, FILETIME, GENERIC_READ, GENERIC_WRITE, HANDLE, ERROR_HANDLE_EOF,
+};
+#[cfg(windows)]
+use windows::Win32::Security::{
+    GetFileSecurityW, SetFileSecurityW, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
+    OBJECT_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+};
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::{
-    LockFileEx, MoveFileExW, SetFileAttributesW, SetFileTime, UnlockFileEx,
-    FILE_FLAGS_AND_ATTRIBUTES, LOCKFILE_EXCLUSIVE_LOCK, MOVE_FILE_FLAGS,
+    CreateFileW, FileBasicInfo, FileDispositionInfoEx, FileRenameInfo, FindClose,
+    FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard, GetFileInformationByHandle,
+    LockFileEx, SetFileInformationByHandle, UnlockFileEx, BY_HANDLE_FILE_INFORMATION, CREATE_NEW,
+    DELETE, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED,
+    FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_OFFLINE,
+    FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_ATTRIBUTE_SPARSE_FILE, FILE_BASIC_INFO, FILE_CREATION_DISPOSITION,
+    FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAGS_AND_ATTRIBUTES,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_MODE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+    OPEN_EXISTING,
+    WIN32_FIND_STREAM_DATA,
 };
 #[cfg(windows)]
 use windows::Win32::System::IO::OVERLAPPED;
@@ -108,6 +124,16 @@ pub enum QuarantineState {
     Restoring,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct QuarantineTransaction {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_identity: Option<FileIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging_identity: Option<FileIdentity>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuarantineRecordV2 {
     pub original_path: PathBuf,
@@ -119,6 +145,14 @@ pub struct QuarantineRecordV2 {
     pub size_bytes: Option<u64>,
     #[serde(default)]
     pub state: QuarantineState,
+    #[serde(default, skip_serializing_if = "QuarantineTransaction::is_empty")]
+    pub transaction: QuarantineTransaction,
+}
+
+impl QuarantineTransaction {
+    fn is_empty(&self) -> bool {
+        self.source_identity.is_none() && self.staging_path.is_none() && self.staging_identity.is_none()
+    }
 }
 
 fn validate_windows_component(name: &str) -> Result<()> {
@@ -144,12 +178,12 @@ fn validate_windows_component(name: &str) -> Result<()> {
         anyhow::bail!("Windows file name {:?} is reserved", name);
     }
     if let Some(number) = stem.strip_prefix("COM") {
-        if number.len() == 1 && "123456789".contains(number) {
+        if number.chars().count() == 1 && "123456789¹²³".contains(number) {
             anyhow::bail!("Windows file name {:?} is reserved", name);
         }
     }
     if let Some(number) = stem.strip_prefix("LPT") {
-        if number.len() == 1 && "123456789".contains(number) {
+        if number.chars().count() == 1 && "123456789¹²³".contains(number) {
             anyhow::bail!("Windows file name {:?} is reserved", name);
         }
     }
@@ -261,8 +295,8 @@ impl QuarantineManifestV2 {
         let parent = path.parent().context("Manifest path has no parent directory")?;
 
         if !path.exists() {
-            let orphan_temps = Self::find_orphan_temps(parent);
-            let existing_files = Self::find_existing_state_files(parent);
+            let orphan_temps = Self::find_orphan_temps(parent)?;
+            let existing_files = Self::find_existing_state_files(parent)?;
             if !orphan_temps.is_empty() || !existing_files.is_empty() {
                 anyhow::bail!(
                     "Ambiguous quarantine state: manifest.json is missing but {} orphan temporary file(s) and {} existing file(s) remain. Refusing to initialize empty manifest to avoid data loss.",
@@ -305,7 +339,7 @@ impl QuarantineManifestV2 {
             for (k, v) in &manifest_v2.entries {
                 v.validate(k, parent)?;
             }
-            Self::cleanup_stale_temps_if_safe(parent);
+            Self::cleanup_stale_temps_if_safe(parent)?;
             return Ok(manifest_v2);
         }
 
@@ -313,8 +347,7 @@ impl QuarantineManifestV2 {
             .with_context(|| format!("Quarantine manifest at {:?} is corrupt or unparseable", path))?;
         tracing::info!("Detected v1 quarantine manifest at {:?}. Starting non-destructive migration...", path);
         let backup_path = parent.join("manifest.v1.bak");
-        std::fs::copy(path, &backup_path)
-            .with_context(|| format!("Failed to create non-destructive v1 backup at {:?}", backup_path))?;
+        Self::preserve_v1_backup(path, &backup_path)?;
 
         let mut v2_entries = HashMap::new();
         for (k, orig_path_str) in manifest_v1.entries {
@@ -324,6 +357,7 @@ impl QuarantineManifestV2 {
                 original_sha256: None,
                 size_bytes: None,
                 state: QuarantineState::Quarantined,
+                transaction: QuarantineTransaction::default(),
             };
             record.validate(&k, parent)?;
             v2_entries.insert(k, record);
@@ -337,8 +371,42 @@ impl QuarantineManifestV2 {
         v2_manifest.save_atomic(path)
             .with_context(|| format!("Failed to save migrated v2 manifest to {:?}", path))?;
         tracing::info!("Quarantine manifest migrated to v2 with {} entries. Backup preserved at {:?}", v2_manifest.entries.len(), backup_path);
-        Self::cleanup_stale_temps_if_safe(parent);
+        Self::cleanup_stale_temps_if_safe(parent)?;
         Ok(v2_manifest)
+    }
+
+    fn preserve_v1_backup(source: &Path, backup_path: &Path) -> Result<()> {
+        use std::io::Write;
+
+        ensure_not_reparse(source, "v1 quarantine manifest")?;
+        ensure_not_reparse(backup_path, "v1 quarantine backup")?;
+        let content = std::fs::read(source)
+            .with_context(|| format!("Failed to read v1 quarantine manifest at {:?}", source))?;
+
+        if backup_path.exists() {
+            let existing = std::fs::read(backup_path)
+                .with_context(|| format!("Failed to read existing v1 backup at {:?}", backup_path))?;
+            if existing != content {
+                anyhow::bail!(
+                    "Existing v1 backup at {:?} differs from the current manifest; refusing to overwrite",
+                    backup_path
+                );
+            }
+            return Ok(());
+        }
+
+        let mut backup = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(backup_path)
+            .with_context(|| format!("Failed to create exclusive v1 backup at {:?}", backup_path))?;
+        backup
+            .write_all(&content)
+            .with_context(|| format!("Failed to write v1 backup at {:?}", backup_path))?;
+        backup
+            .sync_all()
+            .with_context(|| format!("Failed to sync v1 backup at {:?}", backup_path))?;
+        Ok(())
     }
 
     /// Atomically persists the manifest using an exclusive temp file and sync_all.
@@ -383,39 +451,45 @@ impl QuarantineManifestV2 {
         Ok(())
     }
 
-    fn find_orphan_temps(dir: &Path) -> Vec<PathBuf> {
+    fn find_orphan_temps(dir: &Path) -> Result<Vec<PathBuf>> {
         let mut temps = Vec::new();
-        if let Ok(read_dir) = std::fs::read_dir(dir) {
-            for entry in read_dir.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with("manifest.json.tmp.") {
-                    temps.push(entry.path());
-                }
+        let read_dir = std::fs::read_dir(dir)
+            .with_context(|| format!("Failed to enumerate quarantine directory {:?}", dir))?;
+        for entry in read_dir {
+            let entry = entry
+                .with_context(|| format!("Failed to enumerate quarantine directory {:?}", dir))?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("manifest.json.tmp.") {
+                temps.push(entry.path());
             }
         }
-        temps
+        Ok(temps)
     }
 
-    fn find_existing_state_files(dir: &Path) -> Vec<PathBuf> {
+    fn find_existing_state_files(dir: &Path) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
-        if let Ok(read_dir) = std::fs::read_dir(dir) {
-            for entry in read_dir.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str == QUARANTINE_LOCK_FILE || name_str.starts_with("manifest.json.tmp.") {
-                    continue;
-                }
-                files.push(entry.path());
+        let read_dir = std::fs::read_dir(dir)
+            .with_context(|| format!("Failed to enumerate quarantine directory {:?}", dir))?;
+        for entry in read_dir {
+            let entry = entry
+                .with_context(|| format!("Failed to enumerate quarantine directory {:?}", dir))?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str == QUARANTINE_LOCK_FILE || name_str.starts_with("manifest.json.tmp.") {
+                continue;
             }
+            files.push(entry.path());
         }
-        files
+        Ok(files)
     }
 
-    fn cleanup_stale_temps_if_safe(dir: &Path) {
-        for temp in Self::find_orphan_temps(dir) {
-            let _ = std::fs::remove_file(temp);
+    fn cleanup_stale_temps_if_safe(dir: &Path) -> Result<()> {
+        for temp in Self::find_orphan_temps(dir)? {
+            std::fs::remove_file(&temp)
+                .with_context(|| format!("Failed to remove stale manifest temp {:?}", temp))?;
         }
+        Ok(())
     }
 }
 
@@ -438,8 +512,15 @@ impl QuarantineProcessLock {
         let handle = HANDLE(file.as_raw_handle() as isize);
         let mut overlapped = OVERLAPPED::default();
         unsafe {
-            LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK, 0, u32::MAX, u32::MAX, &mut overlapped)
-                .map_err(|error| anyhow::anyhow!("Failed to acquire cross-process quarantine lock: {}", error))?;
+            LockFileEx(
+                handle,
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                u32::MAX,
+                u32::MAX,
+                &mut overlapped,
+            )
+            .map_err(|error| anyhow::anyhow!("Failed to acquire cross-process quarantine lock: {}", error))?;
         }
         Ok(Self { file })
     }
@@ -504,216 +585,563 @@ impl std::error::Error for CrossDeviceMoveError {}
 #[cfg(windows)]
 fn wide_path(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
-    path.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+
+    let raw: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let mut prefixed = Vec::with_capacity(raw.len() + 8);
+    if raw.starts_with(&[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16]) {
+        prefixed.extend_from_slice(&raw);
+    } else if raw.starts_with(&[b'\\' as u16, b'\\' as u16]) {
+        prefixed.extend("\\\\?\\UNC\\".encode_utf16());
+        prefixed.extend_from_slice(&raw[2..]);
+    } else {
+        prefixed.extend("\\\\?\\".encode_utf16());
+        prefixed.extend_from_slice(&raw);
+    }
+    prefixed.push(0);
+    prefixed
 }
 
+#[cfg(all(unix, not(windows)))]
 fn atomic_move_no_replace(source: &Path, destination: &Path) -> Result<()> {
-    #[cfg(windows)]
-    {
-        let source_wide = wide_path(source);
-        let destination_wide = wide_path(destination);
-        unsafe {
-            MoveFileExW(
-                PCWSTR(source_wide.as_ptr()),
-                PCWSTR(destination_wide.as_ptr()),
-                MOVE_FILE_FLAGS(0),
-            )
+    match std::fs::hard_link(source, destination) {
+        Ok(()) => std::fs::remove_file(source)
+            .with_context(|| format!("Moved {:?} but failed to remove source {:?}", source, destination)),
+        Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
+            Err(anyhow::Error::new(CrossDeviceMoveError))
         }
-        .map_err(|error| {
-            let code = error.code().0 as u32 & 0xFFFF;
-            if code == 17 {
-                anyhow::Error::new(CrossDeviceMoveError)
-            } else {
-                anyhow::anyhow!(
-                    "Failed atomic move from {:?} to {:?}: {}",
-                    source,
-                    destination,
-                    error
-                )
-            }
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed atomic move from {:?} to {:?}", source, destination)),
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn atomic_move_no_replace(source: &Path, destination: &Path) -> Result<()> {
+    if destination.exists() {
+        anyhow::bail!("Destination {:?} already exists", destination);
+    }
+    std::fs::rename(source, destination)
+        .with_context(|| format!("Failed atomic move from {:?} to {:?}", source, destination))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct FileIdentity {
+    pub volume_id: u64,
+    pub file_id: u64,
+    pub len: u64,
+    #[serde(default)]
+    pub creation_time: u64,
+    #[serde(default)]
+    pub last_access_time: u64,
+    #[serde(default)]
+    pub last_write_time: u64,
+    #[serde(default)]
+    pub attributes: u32,
+}
+
+impl FileIdentity {
+    fn same_object(&self, other: &Self) -> bool {
+        self.volume_id == other.volume_id && self.file_id == other.file_id
+    }
+
+    fn same_file(&self, other: &Self) -> bool {
+        self.same_object(other) && self.len == other.len
+    }
+}
+
+#[cfg(windows)]
+fn filetime_to_u64(value: FILETIME) -> u64 {
+    ((value.dwHighDateTime as u64) << 32) | value.dwLowDateTime as u64
+}
+
+#[cfg(windows)]
+fn identity_from_file(file: &std::fs::File) -> Result<FileIdentity> {
+    let handle = HANDLE(file.as_raw_handle() as isize);
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    unsafe {
+        GetFileInformationByHandle(handle, &mut info)
+            .map_err(|error| anyhow::anyhow!("Failed to read file identity: {}", error))?;
+    }
+    Ok(FileIdentity {
+        volume_id: info.dwVolumeSerialNumber as u64,
+        file_id: ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+        len: ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64,
+        creation_time: filetime_to_u64(info.ftCreationTime),
+        last_access_time: filetime_to_u64(info.ftLastAccessTime),
+        last_write_time: filetime_to_u64(info.ftLastWriteTime),
+        attributes: info.dwFileAttributes,
+    })
+}
+
+#[cfg(not(windows))]
+fn system_time_to_u64(value: Option<std::time::SystemTime>) -> u64 {
+    value
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(not(windows))]
+fn identity_from_file(file: &std::fs::File) -> Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = file
+        .metadata()
+        .context("Failed to read file identity metadata")?;
+    Ok(FileIdentity {
+        volume_id: metadata.dev(),
+        file_id: metadata.ino(),
+        len: metadata.len(),
+        creation_time: system_time_to_u64(metadata.created().ok()),
+        last_access_time: system_time_to_u64(metadata.accessed().ok()),
+        last_write_time: system_time_to_u64(metadata.modified().ok()),
+        attributes: metadata.mode(),
+    })
+}
+
+#[cfg(windows)]
+fn open_windows_file(
+    path: &Path,
+    access: u32,
+    share: u32,
+    creation: FILE_CREATION_DISPOSITION,
+    flags: FILE_FLAGS_AND_ATTRIBUTES,
+) -> Result<std::fs::File> {
+    let wide = wide_path(path);
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            access,
+            FILE_SHARE_MODE(share),
+            None,
+            creation,
+            flags,
+            HANDLE::default(),
+        )
+    }
+    .map_err(|error| anyhow::anyhow!("Failed to open {:?}: {}", path, error))?;
+    let file = unsafe { std::fs::File::from_raw_handle(handle.0 as RawHandle) };
+    Ok(file)
+}
+
+struct LockedFile {
+    file: std::fs::File,
+    path: PathBuf,
+    identity: FileIdentity,
+}
+
+impl LockedFile {
+    fn open_source(path: &Path) -> Result<Self> {
+        ensure_not_reparse(path, "Source")?;
+        #[cfg(windows)]
+        let file = open_windows_file(
+            path,
+            GENERIC_READ.0 | DELETE.0,
+            FILE_SHARE_READ.0,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+        )?;
+        #[cfg(not(windows))]
+        let file = std::fs::File::open(path)
+            .with_context(|| format!("Failed to open {:?}", path))?;
+        let identity = identity_from_file(&file)?;
+        Self::from_parts(file, path, identity)
+    }
+
+    fn open_read(path: &Path) -> Result<Self> {
+        ensure_not_reparse(path, "Verification target")?;
+        #[cfg(windows)]
+        let file = open_windows_file(
+            path,
+            GENERIC_READ.0,
+            FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+        )?;
+        #[cfg(not(windows))]
+        let file = std::fs::File::open(path)
+            .with_context(|| format!("Failed to open {:?}", path))?;
+        let identity = identity_from_file(&file)?;
+        Self::from_parts(file, path, identity)
+    }
+
+    fn create_staging(path: &Path) -> Result<Self> {
+        ensure_not_reparse(path, "Staging file")?;
+        #[cfg(windows)]
+        let file = open_windows_file(
+            path,
+            GENERIC_READ.0 | GENERIC_WRITE.0 | DELETE.0,
+            FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+        )?;
+        #[cfg(not(windows))]
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .with_context(|| format!("Failed to create exclusive staging file {:?}", path))?;
+        let identity = identity_from_file(&file)?;
+        Self::from_parts(file, path, identity)
+    }
+
+    fn from_parts(file: std::fs::File, path: &Path, identity: FileIdentity) -> Result<Self> {
+        #[cfg(windows)]
+        if identity.attributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+            anyhow::bail!("Source {:?} is a reparse point or symbolic link", path);
+        }
+        Ok(Self {
+            file,
+            path: path.to_path_buf(),
+            identity,
         })
     }
 
-    #[cfg(all(unix, not(windows)))]
-    {
-        match std::fs::hard_link(source, destination) {
-            Ok(()) => std::fs::remove_file(source)
-                .with_context(|| format!("Moved {:?} but failed to remove source {:?}", source, destination)),
-            Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
-                Err(anyhow::Error::new(CrossDeviceMoveError))
+    fn current_identity(&self) -> Result<FileIdentity> {
+        identity_from_file(&self.file)
+    }
+
+    fn rewind(&mut self) -> Result<()> {
+        self.file
+            .seek(SeekFrom::Start(0))
+            .with_context(|| format!("Failed to rewind {:?}", self.path))?;
+        Ok(())
+    }
+
+    fn hash(&mut self) -> Result<String> {
+        self.rewind()?;
+        let mut hasher = Sha256::new();
+        let mut buffer = vec![0u8; BUFFER_SIZE];
+        loop {
+            let read = self
+                .file
+                .read(&mut buffer)
+                .with_context(|| format!("Failed to read {:?}", self.path))?;
+            if read == 0 {
+                break;
             }
-            Err(error) => Err(error)
-                .with_context(|| format!("Failed atomic move from {:?} to {:?}", source, destination)),
+            hasher.update(&buffer[..read]);
         }
+        Ok(format!("{:x}", hasher.finalize()))
     }
 
-    #[cfg(not(any(windows, unix)))]
-    {
-        if destination.exists() {
-            anyhow::bail!("Destination {:?} already exists", destination);
+    fn verify_hash(&mut self, expected_hash: &str, expected_size: u64) -> Result<()> {
+        if self.current_identity()?.len != expected_size {
+            anyhow::bail!(
+                "Size verification failed for {:?}: expected {}, found {}",
+                self.path,
+                expected_size,
+                self.current_identity()?.len
+            );
         }
-        std::fs::rename(source, destination)
-            .with_context(|| format!("Failed atomic move from {:?} to {:?}", source, destination))
+        let actual_hash = self.hash()?;
+        if actual_hash != expected_hash {
+            anyhow::bail!(
+                "SHA-256 verification failed for {:?}: expected {}, found {}",
+                self.path,
+                expected_hash,
+                actual_hash
+            );
+        }
+        Ok(())
+    }
+
+    fn revalidate_source(&mut self, expected_hash: &str) -> Result<()> {
+        if !self.current_identity()?.same_file(&self.identity) {
+            anyhow::bail!("Source identity changed for {:?}; preserving all copies", self.path);
+        }
+        self.verify_hash(expected_hash, self.identity.len)
+    }
+
+    fn move_no_replace(&mut self, destination: &Path) -> Result<()> {
+        #[cfg(windows)]
+        {
+            let destination_wide = wide_path(destination);
+            let name = &destination_wide[..destination_wide.len().saturating_sub(1)];
+            let buffer_size = std::mem::size_of::<FILE_RENAME_INFO>()
+                + name.len().saturating_sub(1) * std::mem::size_of::<u16>();
+            let mut buffer = vec![0u64; buffer_size.div_ceil(8)];
+            let info = buffer.as_mut_ptr() as *mut FILE_RENAME_INFO;
+            unsafe {
+                (*info).Anonymous.ReplaceIfExists = BOOLEAN(0);
+                (*info).RootDirectory = HANDLE::default();
+                (*info).FileNameLength = std::mem::size_of_val(name) as u32;
+                std::ptr::copy_nonoverlapping(
+                    name.as_ptr(),
+                    (*info).FileName.as_mut_ptr(),
+                    name.len(),
+                );
+                let result = SetFileInformationByHandle(
+                    HANDLE(self.file.as_raw_handle() as isize),
+                    FileRenameInfo,
+                    info as *const _ as *const _,
+                    buffer_size as u32,
+                );
+                if let Err(error) = result {
+                    let code = error.code().0 as u32 & 0xFFFF;
+                    if code == 17 {
+                        return Err(anyhow::Error::new(CrossDeviceMoveError));
+                    }
+                    return Err(anyhow::anyhow!(
+                        "Failed handle-based move from {:?} to {:?}: {}",
+                        self.path,
+                        destination,
+                        error
+                    ));
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if !self.current_identity()?.same_object(&self.identity) {
+                anyhow::bail!("Source identity changed for {:?}; refusing to move", self.path);
+            }
+            atomic_move_no_replace(&self.path, destination)?;
+        }
+        self.path = destination.to_path_buf();
+        Ok(())
+    }
+
+    fn delete(self) -> Result<()> {
+        #[cfg(windows)]
+        {
+            let info = FILE_DISPOSITION_INFO_EX {
+                Flags: FILE_DISPOSITION_INFO_EX_FLAGS(
+                    FILE_DISPOSITION_FLAG_DELETE.0 | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE.0,
+                ),
+            };
+            unsafe {
+                SetFileInformationByHandle(
+                    HANDLE(self.file.as_raw_handle() as isize),
+                    FileDispositionInfoEx,
+                    &info as *const _ as *const _,
+                    std::mem::size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+                )
+                .map_err(|error| {
+                    anyhow::anyhow!("Failed handle-based delete for {:?}: {}", self.path, error)
+                })?;
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if !self.current_identity()?.same_object(&self.identity) {
+                anyhow::bail!("Source identity changed for {:?}; refusing to delete", self.path);
+            }
+            std::fs::remove_file(&self.path)
+                .with_context(|| format!("Failed to delete {:?}", self.path))?;
+        }
+        Ok(())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FileIdentity {
-    len: u64,
-    #[cfg(not(windows))]
-    modified: Option<SystemTime>,
-    #[cfg(not(windows))]
-    created: Option<SystemTime>,
-    #[cfg(windows)]
-    creation_time: u64,
-    #[cfg(windows)]
-    last_write_time: u64,
-    #[cfg(windows)]
-    attributes: u32,
+fn stream_path(path: &Path, stream_name: &str) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(stream_name);
+    PathBuf::from(value)
 }
 
-fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
-    FileIdentity {
-        len: metadata.len(),
-        #[cfg(not(windows))]
-        modified: metadata.modified().ok(),
-        #[cfg(not(windows))]
-        created: metadata.created().ok(),
-        #[cfg(windows)]
-        creation_time: metadata.creation_time(),
-        #[cfg(windows)]
-        last_write_time: metadata.last_write_time(),
-        #[cfg(windows)]
-        attributes: metadata.file_attributes(),
-    }
-}
+#[cfg(windows)]
+fn enumerate_streams(path: &Path) -> Result<Vec<(String, i64)>> {
+    let wide = wide_path(path);
+    let mut data = WIN32_FIND_STREAM_DATA::default();
+    let handle = match unsafe {
+        FindFirstStreamW(
+            PCWSTR(wide.as_ptr()),
+            FindStreamInfoStandard,
+            &mut data as *mut _ as *mut _,
+            0,
+        )
+    } {
+        Ok(handle) => handle,
+        Err(error) if error.code().0 as u32 & 0xFFFF == ERROR_HANDLE_EOF.0 => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to enumerate NTFS streams for {:?}", path))
+        }
+    };
 
-fn compute_file_hash_sync(path: &Path) -> Result<String> {
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("Failed to open {:?}", path))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; BUFFER_SIZE];
+    let mut streams = Vec::new();
     loop {
-        let read = file
-            .read(&mut buffer)
-            .with_context(|| format!("Failed to read {:?}", path))?;
-        if read == 0 {
-            break;
+        let length = data
+            .cStreamName
+            .iter()
+            .position(|value| *value == 0)
+            .unwrap_or(data.cStreamName.len());
+        streams.push((
+            String::from_utf16_lossy(&data.cStreamName[..length]),
+            data.StreamSize,
+        ));
+        match unsafe { FindNextStreamW(handle, &mut data as *mut _ as *mut _) } {
+            Ok(()) => {}
+            Err(error) if error.code().0 as u32 & 0xFFFF == ERROR_HANDLE_EOF.0 => break,
+            Err(error) => {
+                let _ = unsafe { FindClose(handle) };
+                return Err(error)
+                    .with_context(|| format!("Failed to enumerate NTFS streams for {:?}", path));
+            }
         }
-        hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    unsafe { FindClose(handle) }.map_err(|error| anyhow::anyhow!("Failed to close stream search: {}", error))?;
+    Ok(streams)
 }
 
-fn verify_file(path: &Path, expected_hash: &str, expected_size: u64) -> Result<()> {
-    ensure_not_reparse(path, "Verification target")?;
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("Failed to read metadata for {:?}", path))?;
-    if metadata.len() != expected_size {
-        anyhow::bail!(
-            "Size verification failed for {:?}: expected {}, found {}",
-            path,
-            expected_size,
-            metadata.len()
-        );
-    }
-    let actual_hash = compute_file_hash_sync(path)?;
-    if actual_hash != expected_hash {
-        anyhow::bail!(
-            "SHA-256 verification failed for {:?}: expected {}, found {}",
-            path,
-            expected_hash,
-            actual_hash
-        );
-    }
-    Ok(())
-}
-
-fn revalidate_source(path: &Path, identity: &FileIdentity, expected_hash: &str) -> Result<()> {
-    ensure_not_reparse(path, "Source")?;
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("Failed to revalidate source {:?}", path))?;
-    if file_identity(&metadata) != *identity {
-        anyhow::bail!("Source identity changed for {:?}; preserving all copies", path);
-    }
-    let actual_hash = compute_file_hash_sync(path)?;
-    if actual_hash != expected_hash {
-        anyhow::bail!("Source content changed for {:?}; preserving all copies", path);
+#[cfg(windows)]
+fn preserve_streams(source: &Path, destination: &Path) -> Result<()> {
+    for (stream_name, _) in enumerate_streams(source)? {
+        if stream_name == "::$DATA" {
+            continue;
+        }
+        let source_stream = stream_path(source, &stream_name);
+        let destination_stream = stream_path(destination, &stream_name);
+        let mut input = std::fs::File::open(&source_stream)
+            .with_context(|| format!("Failed to open NTFS stream {:?}", source_stream))?;
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&destination_stream)
+            .with_context(|| format!("Failed to create NTFS stream {:?}", destination_stream))?;
+        std::io::copy(&mut input, &mut output)
+            .with_context(|| format!("Failed to copy NTFS stream {:?}", source_stream))?;
+        output
+            .sync_all()
+            .with_context(|| format!("Failed to sync NTFS stream {:?}", destination_stream))?;
     }
     Ok(())
 }
 
 #[cfg(windows)]
-fn preserve_metadata(source_metadata: &std::fs::Metadata, destination: &Path) -> Result<()> {
+fn preserve_security(source: &Path, destination: &Path) -> Result<()> {
+    let information = OBJECT_SECURITY_INFORMATION(
+        OWNER_SECURITY_INFORMATION.0 | GROUP_SECURITY_INFORMATION.0 | DACL_SECURITY_INFORMATION.0,
+    );
+    let source_wide = wide_path(source);
+    let mut needed = 0u32;
+    let mut buffer = Vec::<u64>::new();
+    let first = unsafe {
+        GetFileSecurityW(
+            PCWSTR(source_wide.as_ptr()),
+            information.0,
+            PSECURITY_DESCRIPTOR::default(),
+            0,
+            &mut needed,
+        )
+    };
+    if !first.as_bool() && needed == 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("Failed to read security descriptor for {:?}", source));
+    }
+    if needed == 0 {
+        anyhow::bail!("Security descriptor for {:?} is empty", source);
+    }
+    buffer.resize((needed as usize).div_ceil(8), 0);
+    let descriptor = PSECURITY_DESCRIPTOR(buffer.as_mut_ptr() as *mut _);
+    let second = unsafe {
+        GetFileSecurityW(
+            PCWSTR(source_wide.as_ptr()),
+            information.0,
+            descriptor,
+            needed,
+            &mut needed,
+        )
+    };
+    if !second.as_bool() {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("Failed to read security descriptor for {:?}", source));
+    }
+
+    let destination_wide = wide_path(destination);
+    let applied = unsafe {
+        SetFileSecurityW(PCWSTR(destination_wide.as_ptr()), information, descriptor)
+    };
+    if !applied.as_bool() {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("Failed to preserve security descriptor for {:?}", destination));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn preserve_basic_info(destination: &Path, identity: &FileIdentity) -> Result<()> {
     let file = std::fs::OpenOptions::new()
         .write(true)
         .open(destination)
         .with_context(|| format!("Failed to open {:?} for metadata preservation", destination))?;
-    let handle = HANDLE(file.as_raw_handle() as isize);
-    let creation = FILETIME {
-        dwLowDateTime: source_metadata.creation_time() as u32,
-        dwHighDateTime: (source_metadata.creation_time() >> 32) as u32,
-    };
-    let access = FILETIME {
-        dwLowDateTime: source_metadata.last_access_time() as u32,
-        dwHighDateTime: (source_metadata.last_access_time() >> 32) as u32,
-    };
-    let write = FILETIME {
-        dwLowDateTime: source_metadata.last_write_time() as u32,
-        dwHighDateTime: (source_metadata.last_write_time() >> 32) as u32,
+    let info = FILE_BASIC_INFO {
+        CreationTime: identity.creation_time as i64,
+        LastAccessTime: identity.last_access_time as i64,
+        LastWriteTime: identity.last_write_time as i64,
+        ChangeTime: 0,
+        FileAttributes: identity.attributes,
     };
     unsafe {
-        SetFileTime(handle, Some(&creation), Some(&access), Some(&write))
-            .map_err(|error| anyhow::anyhow!("Failed to preserve timestamps for {:?}: {}", destination, error))?;
-    }
-    drop(file);
-    let destination_wide = wide_path(destination);
-    unsafe {
-        SetFileAttributesW(
-            PCWSTR(destination_wide.as_ptr()),
-            FILE_FLAGS_AND_ATTRIBUTES(source_metadata.file_attributes()),
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle() as isize),
+            FileBasicInfo,
+            &info as *const _ as *const _,
+            std::mem::size_of::<FILE_BASIC_INFO>() as u32,
         )
-        .map_err(|error| anyhow::anyhow!("Failed to preserve attributes for {:?}: {}", destination, error))?;
+        .map_err(|error| anyhow::anyhow!("Failed to preserve metadata for {:?}: {}", destination, error))?;
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn preserve_windows_metadata(source: &Path, destination: &Path, identity: &FileIdentity) -> Result<()> {
+    let unsupported = identity.attributes
+        & (FILE_ATTRIBUTE_ENCRYPTED.0
+            | FILE_ATTRIBUTE_COMPRESSED.0
+            | FILE_ATTRIBUTE_OFFLINE.0
+            | FILE_ATTRIBUTE_SPARSE_FILE.0
+            | FILE_ATTRIBUTE_DIRECTORY.0
+            | FILE_ATTRIBUTE_REPARSE_POINT.0);
+    if unsupported != 0 {
+        anyhow::bail!(
+            "Source {:?} uses unsupported NTFS attributes 0x{:x}; retaining source",
+            source,
+            unsupported
+        );
+    }
+    preserve_streams(source, destination)?;
+    preserve_security(source, destination)?;
+    preserve_basic_info(destination, identity)?;
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn preserve_metadata(source_metadata: &std::fs::Metadata, destination: &Path) -> Result<()> {
-    std::fs::set_permissions(destination, source_metadata.permissions())
+fn preserve_metadata(source: &Path, destination: &Path) -> Result<()> {
+    let metadata = std::fs::metadata(source)
+        .with_context(|| format!("Failed to read metadata for {:?}", source))?;
+    std::fs::set_permissions(destination, metadata.permissions())
         .with_context(|| format!("Failed to preserve permissions for {:?}", destination))
 }
 
-fn copy_file_exclusive(source: &Path, destination: &Path) -> Result<()> {
-    ensure_not_reparse(source, "Copy source")?;
-    ensure_not_reparse(destination, "Staging destination")?;
-    let source_metadata = std::fs::metadata(source)
-        .with_context(|| format!("Failed to read metadata for {:?}", source))?;
-    let mut source_file = std::fs::File::open(source)
-        .with_context(|| format!("Failed to open {:?}", source))?;
-    let mut destination_file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
-        .with_context(|| format!("Failed to create exclusive staging file {:?}", destination))?;
+fn copy_to_staging(source: &mut LockedFile, staging: &mut LockedFile) -> Result<FileIdentity> {
+    ensure_not_reparse(&source.path, "Copy source")?;
+    ensure_not_reparse(&staging.path, "Staging destination")?;
+    source.rewind()?;
+    staging.rewind()?;
+    std::io::copy(&mut source.file, &mut staging.file)
+        .with_context(|| format!("Failed to copy {:?} to {:?}", source.path, staging.path))?;
+    staging
+        .file
+        .sync_all()
+        .with_context(|| format!("Failed to sync staging file {:?}", staging.path))?;
 
-    let copy_result = (|| -> Result<()> {
-        std::io::copy(&mut source_file, &mut destination_file)
-            .with_context(|| format!("Failed to copy {:?} to {:?}", source, destination))?;
-        destination_file
-            .sync_all()
-            .with_context(|| format!("Failed to sync staging file {:?}", destination))?;
-        Ok(())
-    })();
-
-    if let Err(error) = copy_result {
-        drop(destination_file);
-        let _ = std::fs::remove_file(destination);
-        return Err(error);
+    if !source.current_identity()?.same_file(&source.identity) {
+        anyhow::bail!("Source identity changed for {:?}; preserving all copies", source.path);
     }
-    drop(destination_file);
-    preserve_metadata(&source_metadata, destination)?;
-    Ok(())
+
+    #[cfg(windows)]
+    preserve_windows_metadata(&source.path, &staging.path, &source.identity)?;
+    #[cfg(not(windows))]
+    preserve_metadata(&source.path, &staging.path)?;
+
+    let identity = staging.current_identity()?;
+    if !identity.same_object(&staging.identity) {
+        anyhow::bail!("Staging identity changed for {:?}; preserving all copies", staging.path);
+    }
+    Ok(identity)
 }
 
 fn quarantine_staging_path_for(dir: &Path, key: &str) -> PathBuf {
@@ -734,6 +1162,99 @@ enum RecoveryAction {
     RollbackRestore,
 }
 
+fn path_present(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("Failed to inspect {:?}", path)),
+    }
+}
+
+fn verify_source_at(
+    path: &Path,
+    identity: &FileIdentity,
+    expected_hash: &str,
+    expected_size: u64,
+) -> Result<()> {
+    let mut file = LockedFile::open_read(path)?;
+    if !file.current_identity()?.same_file(identity) {
+        anyhow::bail!("Source identity changed for {:?}; preserving all copies", path);
+    }
+    file.verify_hash(expected_hash, expected_size)
+}
+
+fn verify_destination_at(
+    path: &Path,
+    transaction: &QuarantineTransaction,
+    expected_hash: &str,
+    expected_size: u64,
+) -> Result<()> {
+    let mut file = LockedFile::open_read(path)?;
+    let current = file.current_identity()?;
+    if let Some(staging_identity) = transaction.staging_identity.as_ref() {
+        if !current.same_object(staging_identity) {
+            anyhow::bail!("Destination identity changed for {:?}; preserving all copies", path);
+        }
+    } else if let Some(source_identity) = transaction.source_identity.as_ref() {
+        if !current.same_file(source_identity) {
+            anyhow::bail!("Destination identity changed for {:?}; preserving all copies", path);
+        }
+    } else {
+        anyhow::bail!("Destination {:?} has no recorded identity; preserving all copies", path);
+    }
+    file.verify_hash(expected_hash, expected_size)
+}
+
+fn delete_owned_staging(
+    staging: &Path,
+    transaction: &QuarantineTransaction,
+    expected_hash: Option<(&str, u64)>,
+) -> Result<()> {
+    let recorded = transaction
+        .staging_identity
+        .as_ref()
+        .context("Staging file has no recorded identity; preserving all copies")?;
+    let mut file = LockedFile::open_source(staging)?;
+    if !file.current_identity()?.same_object(recorded) {
+        anyhow::bail!("Staging identity changed for {:?}; preserving all copies", staging);
+    }
+    if let Some((hash, size)) = expected_hash {
+        file.verify_hash(hash, size)?;
+    }
+    file.delete()
+}
+
+fn verify_staging_at(
+    staging: &Path,
+    transaction: &QuarantineTransaction,
+    expected_hash: &str,
+    expected_size: u64,
+) -> Result<LockedFile> {
+    let recorded = transaction
+        .staging_identity
+        .as_ref()
+        .context("Staging file has no recorded identity; preserving all copies")?;
+    let mut file = LockedFile::open_source(staging)?;
+    if !file.current_identity()?.same_object(recorded) {
+        anyhow::bail!("Staging identity changed for {:?}; preserving all copies", staging);
+    }
+    file.verify_hash(expected_hash, expected_size)?;
+    Ok(file)
+}
+
+fn validate_recorded_staging_path(record: &QuarantineRecordV2, derived: &Path) -> Result<()> {
+    if let Some(recorded) = record.transaction.staging_path.as_ref() {
+        if recorded != derived {
+            anyhow::bail!(
+                "Recorded staging path {:?} does not match expected {:?}; preserving all copies",
+                recorded,
+                derived
+            );
+        }
+    }
+    Ok(())
+}
+
 fn recover_staged_quarantine(
     quarantine_dir: &Path,
     key: &str,
@@ -749,37 +1270,45 @@ fn recover_staged_quarantine(
     let source = &record.original_path;
     let destination = quarantine_dir.join(key);
     let staging = quarantine_staging_path_for(quarantine_dir, key);
+    validate_recorded_staging_path(record, &staging)?;
 
-    let source_exists = source.exists();
-    let destination_exists = destination.exists();
-    let staging_exists = staging.exists();
+    let source_exists = path_present(source)?;
+    let destination_exists = path_present(&destination)?;
+    let staging_exists = path_present(&staging)?;
 
     if destination_exists {
-        verify_file(&destination, expected_hash, expected_size)?;
-        if source_exists {
-            verify_file(source, expected_hash, expected_size)?;
-            std::fs::remove_file(source)
-                .with_context(|| format!("Failed to finalize quarantine by removing {:?}", source))?;
+        if source_exists || staging_exists {
+            anyhow::bail!(
+                "Ambiguous quarantine transaction for {:?}: multiple copies remain; preserving all copies",
+                key
+            );
         }
-        if staging_exists {
-            std::fs::remove_file(&staging)
-                .with_context(|| format!("Failed to remove redundant staging file {:?}", staging))?;
-        }
+        verify_destination_at(&destination, &record.transaction, expected_hash, expected_size)?;
         return Ok(RecoveryAction::MarkQuarantined);
     }
 
     if source_exists {
+        let source_identity = record
+            .transaction
+            .source_identity
+            .as_ref()
+            .context("Staged quarantine source has no recorded identity")?;
+        verify_source_at(source, source_identity, expected_hash, expected_size)?;
         if staging_exists {
-            std::fs::remove_file(&staging)
-                .with_context(|| format!("Failed to roll back staging file {:?}", staging))?;
+            delete_owned_staging(&staging, &record.transaction, None)?;
         }
         return Ok(RecoveryAction::RemoveEntry);
     }
 
     if staging_exists {
-        verify_file(&staging, expected_hash, expected_size)?;
-        atomic_move_no_replace(&staging, &destination)?;
-        verify_file(&destination, expected_hash, expected_size)?;
+        let mut staging_file = verify_staging_at(
+            &staging,
+            &record.transaction,
+            expected_hash,
+            expected_size,
+        )?;
+        staging_file.move_no_replace(&destination)?;
+        verify_destination_at(&destination, &record.transaction, expected_hash, expected_size)?;
         return Ok(RecoveryAction::MarkQuarantined);
     }
 
@@ -804,37 +1333,45 @@ fn recover_staged_restore(
     let source = quarantine_dir.join(key);
     let destination = &record.original_path;
     let staging = restore_staging_path_for(destination, key)?;
+    validate_recorded_staging_path(record, &staging)?;
 
-    let source_exists = source.exists();
-    let destination_exists = destination.exists();
-    let staging_exists = staging.exists();
+    let source_exists = path_present(&source)?;
+    let destination_exists = path_present(destination)?;
+    let staging_exists = path_present(&staging)?;
 
     if destination_exists {
-        verify_file(destination, expected_hash, expected_size)?;
-        if source_exists {
-            verify_file(&source, expected_hash, expected_size)?;
-            std::fs::remove_file(&source)
-                .with_context(|| format!("Failed to finalize restore by removing {:?}", source))?;
+        if source_exists || staging_exists {
+            anyhow::bail!(
+                "Ambiguous restore transaction for {:?}: multiple copies remain; preserving all copies",
+                key
+            );
         }
-        if staging_exists {
-            std::fs::remove_file(&staging)
-                .with_context(|| format!("Failed to remove redundant restore staging {:?}", staging))?;
-        }
+        verify_destination_at(destination, &record.transaction, expected_hash, expected_size)?;
         return Ok(RecoveryAction::RemoveEntry);
     }
 
     if source_exists {
+        let source_identity = record
+            .transaction
+            .source_identity
+            .as_ref()
+            .context("Restoring source has no recorded identity")?;
+        verify_source_at(&source, source_identity, expected_hash, expected_size)?;
         if staging_exists {
-            std::fs::remove_file(&staging)
-                .with_context(|| format!("Failed to roll back restore staging {:?}", staging))?;
+            delete_owned_staging(&staging, &record.transaction, None)?;
         }
         return Ok(RecoveryAction::RollbackRestore);
     }
 
     if staging_exists {
-        verify_file(&staging, expected_hash, expected_size)?;
-        atomic_move_no_replace(&staging, destination)?;
-        verify_file(destination, expected_hash, expected_size)?;
+        let mut staging_file = verify_staging_at(
+            &staging,
+            &record.transaction,
+            expected_hash,
+            expected_size,
+        )?;
+        staging_file.move_no_replace(destination)?;
+        verify_destination_at(destination, &record.transaction, expected_hash, expected_size)?;
         return Ok(RecoveryAction::RemoveEntry);
     }
 
@@ -932,8 +1469,22 @@ impl Cleaner {
         let manifest_path = quarantine_dir.join("manifest.json");
         let lock_path = quarantine_dir.join(QUARANTINE_LOCK_FILE);
         let _lock = QuarantineProcessLock::acquire(&lock_path)?;
-        let mut manifest = QuarantineManifestV2::load_or_recover(&manifest_path)?;
-        recover_pending_transactions(&quarantine_dir, &manifest_path, &mut manifest)?;
+        let mut manifest = match QuarantineManifestV2::load_or_recover(&manifest_path) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                tracing::error!(
+                    "Quarantine manifest could not be loaded; destructive quarantine operations are disabled: {}",
+                    error
+                );
+                QuarantineManifestV2::new()
+            }
+        };
+        if let Err(error) = recover_pending_transactions(&quarantine_dir, &manifest_path, &mut manifest) {
+            tracing::error!(
+                "Quarantine transaction recovery failed; destructive quarantine operations remain disabled: {}",
+                error
+            );
+        }
 
         Ok(Self {
             quarantine_dir,
@@ -1060,7 +1611,7 @@ impl Cleaner {
                         result.files_found += 1;
                         result.bytes_reclaimable += meta.len();
                         chunk_count += 1;
-                        
+
                         // Update progress every CHUNK_SIZE files
                         if chunk_count >= CHUNK_SIZE {
                             progress_callback(result.files_found, result.bytes_reclaimable);
@@ -1265,7 +1816,7 @@ impl Cleaner {
                     }
                     by_size.entry(size).or_default().push(path.to_path_buf());
                     chunk_count += 1;
-                    
+
                     // Yield periodically to keep UI responsive
                     if chunk_count >= CHUNK_SIZE {
                         progress_callback(chunk_count, 0);
@@ -1440,10 +1991,15 @@ impl Cleaner {
         let manifest = manifest_guard.clone();
         let mut entries = Vec::new();
 
-        for entry in WalkDir::new(&self.quarantine_dir).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(&self.quarantine_dir).into_iter() {
+            let entry = entry
+                .with_context(|| format!("Failed to enumerate quarantine directory {:?}", self.quarantine_dir))?;
             let path = entry.path();
-            if !path.is_file() {
+            if entry.file_type().is_dir() {
                 continue;
+            }
+            if !entry.file_type().is_file() {
+                anyhow::bail!("Unexpected non-file entry in quarantine directory: {:?}", path);
             }
 
             if let Some(name) = path.file_name() {
@@ -1458,10 +2014,9 @@ impl Cleaner {
             }
 
             ensure_not_reparse(path, "Quarantined file")?;
-            let meta = match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
+            let meta = entry
+                .metadata()
+                .with_context(|| format!("Failed to read metadata for quarantined file {:?}", path))?;
 
             let (original_path, quarantined_at) = if let Some(file_name) = path.file_name() {
                 let key = file_name.to_string_lossy();
@@ -1510,31 +2065,10 @@ impl Cleaner {
         }
 
         let source = self.quarantine_dir.join(&key);
-        ensure_not_reparse(&source, "Quarantine source")?;
-        if !source.exists() {
-            anyhow::bail!("Quarantine source {:?} is missing", source);
-        }
-
-        let destination = record.original_path.clone();
-        QuarantineRecordV2::validate_original_path(&destination, &self.quarantine_dir)?;
-        ensure_not_reparse(&destination, "Restore destination")?;
-        if destination.exists() {
-            anyhow::bail!(
-                "Restore destination {:?} already exists; preserving both copies",
-                destination
-            );
-        }
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to recreate original dir {:?}", parent))?;
-            ensure_not_reparse(parent, "Restore destination parent")?;
-        }
-
-        let source_metadata = std::fs::metadata(&source)
-            .with_context(|| format!("Failed to read quarantine metadata {:?}", source))?;
-        let source_identity = file_identity(&source_metadata);
-        let size = source_metadata.len();
-        let hash = compute_file_hash_sync(&source)?;
+        let mut source_file = LockedFile::open_source(&source)?;
+        let source_identity = source_file.identity.clone();
+        let size = source_identity.len;
+        let hash = source_file.hash()?;
         if let Some(expected_hash) = record.original_sha256.as_deref() {
             if expected_hash != hash {
                 anyhow::bail!("Quarantine content changed for {:?}; preserving both copies", key);
@@ -1546,12 +2080,38 @@ impl Cleaner {
             }
         }
 
+        let destination = record.original_path.clone();
+        QuarantineRecordV2::validate_original_path(&destination, &self.quarantine_dir)?;
+        if path_present(&destination)? {
+            anyhow::bail!(
+                "Restore destination {:?} already exists; preserving both copies",
+                destination
+            );
+        }
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to recreate original dir {:?}", parent))?;
+            ensure_not_reparse(parent, "Restore destination parent")?;
+        }
+
         let staging = restore_staging_path_for(&destination, &key)?;
+        if path_present(&staging)? {
+            anyhow::bail!(
+                "Restore staging {:?} already exists; refusing to overwrite",
+                staging
+            );
+        }
+
         let mut next = guard.clone();
         if let Some(record) = next.entries.get_mut(&key) {
             record.state = QuarantineState::Restoring;
             record.original_sha256 = Some(hash.clone());
             record.size_bytes = Some(size);
+            record.transaction = QuarantineTransaction {
+                source_identity: Some(source_identity.clone()),
+                staging_path: None,
+                staging_identity: None,
+            };
         }
         fault_injection::check("restore_before_staged_save")?;
         self.persist_manifest(&mut guard, next)?;
@@ -1559,10 +2119,10 @@ impl Cleaner {
 
         let mut cross_volume = fault_injection::force_cross_volume();
         if !cross_volume {
-            match atomic_move_no_replace(&source, &destination) {
+            match source_file.move_no_replace(&destination) {
                 Ok(()) => {
                     fault_injection::check("restore_after_final_move")?;
-                    verify_file(&destination, &hash, size)?;
+                    source_file.verify_hash(&hash, size)?;
                 }
                 Err(error) if error.downcast_ref::<CrossDeviceMoveError>().is_some() => {
                     cross_volume = true;
@@ -1579,17 +2139,42 @@ impl Cleaner {
         }
 
         if cross_volume {
-            copy_file_exclusive(&source, &staging)?;
-            fault_injection::check("restore_after_stage_copy")?;
-            verify_file(&staging, &hash, size)?;
-            fault_injection::check("restore_after_stage_verify")?;
-            if let Err(error) = atomic_move_no_replace(&staging, &destination) {
-                if let Err(cleanup_error) = std::fs::remove_file(&staging) {
-                    return Err(error.context(format!(
-                        "Also failed to remove restore staging {:?}: {}",
-                        staging, cleanup_error
-                    )));
+            let mut staging_file = match LockedFile::create_staging(&staging) {
+                Ok(file) => file,
+                Err(error) => {
+                    let mut rollback = guard.clone();
+                    if let Some(record) = rollback.entries.get_mut(&key) {
+                        record.state = QuarantineState::Quarantined;
+                    }
+                    self.persist_manifest(&mut guard, rollback)?;
+                    return Err(error);
                 }
+            };
+
+            let mut staged = guard.clone();
+            if let Some(record) = staged.entries.get_mut(&key) {
+                record.transaction.staging_path = Some(staging.clone());
+                record.transaction.staging_identity = Some(staging_file.identity.clone());
+            }
+            if let Err(error) = self.persist_manifest(&mut guard, staged) {
+                let _ = staging_file.delete();
+                return Err(error);
+            }
+
+            if let Err(error) = copy_to_staging(&mut source_file, &mut staging_file) {
+                let _ = staging_file.delete();
+                let mut rollback = guard.clone();
+                if let Some(record) = rollback.entries.get_mut(&key) {
+                    record.state = QuarantineState::Quarantined;
+                }
+                let _ = self.persist_manifest(&mut guard, rollback);
+                return Err(error);
+            }
+            fault_injection::check("restore_after_stage_copy")?;
+            staging_file.verify_hash(&hash, size)?;
+            fault_injection::check("restore_after_stage_verify")?;
+            if let Err(error) = staging_file.move_no_replace(&destination) {
+                let _ = staging_file.delete();
                 let mut rollback = guard.clone();
                 if let Some(record) = rollback.entries.get_mut(&key) {
                     record.state = QuarantineState::Quarantined;
@@ -1598,11 +2183,10 @@ impl Cleaner {
                 return Err(error);
             }
             fault_injection::check("restore_after_final_move")?;
-            verify_file(&destination, &hash, size)?;
+            staging_file.verify_hash(&hash, size)?;
             fault_injection::check("restore_before_source_delete")?;
-            revalidate_source(&source, &source_identity, &hash)?;
-            std::fs::remove_file(&source)
-                .with_context(|| format!("Failed to finalize restore by removing {:?}", source))?;
+            source_file.revalidate_source(&hash)?;
+            source_file.delete()?;
             fault_injection::check("restore_after_source_delete")?;
         }
 
@@ -1623,6 +2207,9 @@ impl Cleaner {
         QuarantineRecordV2::validate_key(&key)?;
 
         let (_lock, mut guard) = self.prepare_locked()?;
+        if !guard.entries.contains_key(&key) {
+            anyhow::bail!("Quarantine manifest record not found; refusing to delete");
+        }
         let source = self.quarantine_dir.join(&key);
         ensure_not_reparse(&source, "Quarantine source")?;
         if !source.exists() {
@@ -1667,11 +2254,10 @@ impl Cleaner {
         QuarantineRecordV2::validate_original_path(source, &self.quarantine_dir)?;
         let (_lock, mut guard) = self.prepare_locked()?;
 
-        let metadata = std::fs::metadata(source)
-            .with_context(|| format!("Failed to read metadata for {:?}", source))?;
-        let identity = file_identity(&metadata);
-        let size = metadata.len();
-        let hash = compute_file_hash_sync(source)?;
+        let mut source_file = LockedFile::open_source(source)?;
+        let identity = source_file.identity.clone();
+        let size = identity.len;
+        let hash = source_file.hash()?;
 
         let path_hash = {
             let mut hasher = Sha256::new();
@@ -1688,7 +2274,10 @@ impl Cleaner {
         let destination = self.quarantine_dir.join(&key);
         let staging = self.quarantine_staging_path(&key);
 
-        if guard.entries.contains_key(&key) || destination.exists() || staging.exists() {
+        if guard.entries.contains_key(&key)
+            || path_present(&destination)?
+            || path_present(&staging)?
+        {
             anyhow::bail!("Quarantine key {:?} already exists; refusing to overwrite", key);
         }
 
@@ -1701,6 +2290,11 @@ impl Cleaner {
                 original_sha256: Some(hash.clone()),
                 size_bytes: Some(size),
                 state: QuarantineState::Staged,
+                transaction: QuarantineTransaction {
+                    source_identity: Some(identity.clone()),
+                    staging_path: None,
+                    staging_identity: None,
+                },
             },
         );
         fault_injection::check("quarantine_before_staged_save")?;
@@ -1709,10 +2303,10 @@ impl Cleaner {
 
         let mut cross_volume = fault_injection::force_cross_volume();
         if !cross_volume {
-            match atomic_move_no_replace(source, &destination) {
+            match source_file.move_no_replace(&destination) {
                 Ok(()) => {
                     fault_injection::check("quarantine_after_final_move")?;
-                    verify_file(&destination, &hash, size)?;
+                    source_file.verify_hash(&hash, size)?;
                 }
                 Err(error) if error.downcast_ref::<CrossDeviceMoveError>().is_some() => {
                     cross_volume = true;
@@ -1727,17 +2321,48 @@ impl Cleaner {
         }
 
         if cross_volume {
-            copy_file_exclusive(source, &staging)?;
+            let mut staging_file = match LockedFile::create_staging(&staging) {
+                Ok(file) => file,
+                Err(error) => {
+                    let mut rollback = guard.clone();
+                    rollback.entries.remove(&key);
+                    self.persist_manifest(&mut guard, rollback)?;
+                    return Err(error);
+                }
+            };
+
+            let mut staged = guard.clone();
+            if let Some(record) = staged.entries.get_mut(&key) {
+                record.transaction.staging_path = Some(staging.clone());
+                record.transaction.staging_identity = Some(staging_file.identity.clone());
+            }
+            if let Err(error) = self.persist_manifest(&mut guard, staged) {
+                let _ = staging_file.delete();
+                return Err(error);
+            }
+
+            if let Err(error) = copy_to_staging(&mut source_file, &mut staging_file) {
+                let _ = staging_file.delete();
+                let mut rollback = guard.clone();
+                rollback.entries.remove(&key);
+                let _ = self.persist_manifest(&mut guard, rollback);
+                return Err(error);
+            }
             fault_injection::check("quarantine_after_stage_copy")?;
-            verify_file(&staging, &hash, size)?;
+            staging_file.verify_hash(&hash, size)?;
             fault_injection::check("quarantine_after_stage_verify")?;
-            atomic_move_no_replace(&staging, &destination)?;
+            if let Err(error) = staging_file.move_no_replace(&destination) {
+                let _ = staging_file.delete();
+                let mut rollback = guard.clone();
+                rollback.entries.remove(&key);
+                self.persist_manifest(&mut guard, rollback)?;
+                return Err(error);
+            }
             fault_injection::check("quarantine_after_final_move")?;
-            verify_file(&destination, &hash, size)?;
+            staging_file.verify_hash(&hash, size)?;
             fault_injection::check("quarantine_before_source_delete")?;
-            revalidate_source(source, &identity, &hash)?;
-            std::fs::remove_file(source)
-                .with_context(|| format!("Failed to finalize quarantine by removing {:?}", source))?;
+            source_file.revalidate_source(&hash)?;
+            source_file.delete()?;
             fault_injection::check("quarantine_after_source_delete")?;
         }
 
@@ -1932,6 +2557,7 @@ mod tests {
                 original_sha256: None,
                 size_bytes: Some(21),
                 state: QuarantineState::Quarantined,
+                transaction: QuarantineTransaction::default(),
             },
         );
         initial_manifest.entries.insert(
@@ -1942,6 +2568,7 @@ mod tests {
                 original_sha256: None,
                 size_bytes: Some(21),
                 state: QuarantineState::Quarantined,
+                transaction: QuarantineTransaction::default(),
             },
         );
         initial_manifest
@@ -2112,9 +2739,10 @@ mod tests {
         let result = QuarantineManifestV2::load_or_recover(&manifest_file);
         assert!(result.is_err(), "Corrupt manifest must return Err");
 
-        // Cleaner initialization must fail
-        let cleaner_res = Cleaner::new_with_dir(test_dir.path.clone());
-        assert!(cleaner_res.is_err(), "Cleaner init must fail on corrupt manifest");
+        // Cleaner initialization must remain available but destructive operations must fail closed
+        let cleaner = Cleaner::new_with_dir(test_dir.path.clone())
+            .expect("Cleaner startup must not fail because of a corrupt quarantine manifest");
+        assert!(cleaner.list_quarantine().is_err(), "Destructive operations must fail closed");
 
         // Verify disk content was not wiped or replaced with empty json
         let content_after = std::fs::read_to_string(&manifest_file).unwrap();
@@ -2147,6 +2775,7 @@ mod tests {
                 original_sha256: Some("abcdef1234567890".to_string()),
                 size_bytes: Some(1024),
                 state: QuarantineState::Quarantined,
+                transaction: QuarantineTransaction::default(),
             },
         );
 
@@ -2154,7 +2783,8 @@ mod tests {
         assert!(manifest_file.exists());
 
         // Verify no leftover .tmp files
-        let orphan_temps = QuarantineManifestV2::find_orphan_temps(&test_dir.path);
+        let orphan_temps = QuarantineManifestV2::find_orphan_temps(&test_dir.path)
+            .expect("Temporary file enumeration must succeed");
         assert!(orphan_temps.is_empty(), "No temporary files should be left behind");
 
         // Verify content reloaded matches
@@ -2207,8 +2837,9 @@ mod tests {
                     quarantined_at_utc: Some(chrono::Utc::now()),
                     original_sha256: None,
                     size_bytes: Some(100 + i as u64),
-                    state: QuarantineState::Quarantined,
-                };
+                state: QuarantineState::Quarantined,
+                transaction: QuarantineTransaction::default(),
+            };
                 let mut guard = manifest_clone.lock().unwrap();
                 guard.entries.insert(key, record);
                 guard.save_atomic(&path_clone).expect("Concurrent atomic save must succeed");
@@ -2258,7 +2889,9 @@ mod tests {
 
         let manifest_path = workspace.quarantine.join("manifest.json");
         assert!(QuarantineManifestV2::load_or_recover(&manifest_path).is_err());
-        assert!(Cleaner::new_with_dir(workspace.quarantine.clone()).is_err());
+        let cleaner = Cleaner::new_with_dir(workspace.quarantine.clone())
+            .expect("Cleaner startup must remain available");
+        assert!(cleaner.list_quarantine().is_err(), "Destructive operations must fail closed");
         assert!(stray.exists());
         assert!(workspace.quarantine.join(QUARANTINE_LOCK_FILE).exists());
     }
@@ -2276,7 +2909,10 @@ mod tests {
 
     #[test]
     fn test_b2a_reserved_windows_names_rejected() {
-        for name in ["CON", "con.txt", "PRN.log", "AUX", "NUL", "COM1.bin", "LPT9.tar.gz", "name.", "name "] {
+        for name in [
+            "CON", "con.txt", "PRN.log", "AUX", "NUL", "COM1.bin", "LPT9.tar.gz", "COM¹.txt",
+            "LPT².log", "name.", "name ",
+        ] {
             assert!(QuarantineRecordV2::validate_key(name).is_err(), "{:?} must be rejected", name);
         }
         assert!(QuarantineRecordV2::validate_key("valid_hash_1234.bin").is_ok());
@@ -2366,7 +3002,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_b2b_quarantine_cross_volume_before_source_delete_finalizes_both_copies() {
+    async fn test_b2b_quarantine_cross_volume_before_source_delete_preserves_both_copies() {
         fault_injection::reset();
         fault_injection::set_force_cross_volume(true);
         let workspace = TestWorkspace::new("quarantine_before_delete");
@@ -2378,11 +3014,14 @@ mod tests {
         assert!(source.exists());
         assert_eq!(payload_files(&workspace).len(), 1);
 
-        let recovered = workspace.cleaner();
-        let entries = recovered.list_quarantine().unwrap();
-        assert_eq!(entries.len(), 1);
-        assert!(!source.exists());
-        assert_eq!(std::fs::read(&entries[0].quarantine_path).unwrap(), b"payload");
+        let recovered = Cleaner::new_with_dir(workspace.quarantine.clone())
+            .expect("Cleaner startup must remain available");
+        assert!(recovered.list_quarantine().is_err(), "Ambiguous recovery must fail closed");
+        assert!(source.exists());
+        assert_eq!(std::fs::read(&source).unwrap(), b"payload");
+        let copies = payload_files(&workspace);
+        assert_eq!(copies.len(), 1);
+        assert_eq!(std::fs::read(&copies[0]).unwrap(), b"payload");
     }
 
     #[tokio::test]
@@ -2397,7 +3036,9 @@ mod tests {
         assert!(cleaner.quarantine_file(&source).await.is_err());
         std::fs::write(&source, b"changed after staging").unwrap();
 
-        assert!(Cleaner::new_with_dir(workspace.quarantine.clone()).is_err());
+        let recovered = Cleaner::new_with_dir(workspace.quarantine.clone())
+            .expect("Cleaner startup must remain available");
+        assert!(recovered.list_quarantine().is_err(), "Destructive operations must fail closed");
         assert!(source.exists());
         assert_eq!(std::fs::read(&source).unwrap(), b"changed after staging");
         assert_eq!(payload_files(&workspace).len(), 1);
@@ -2497,7 +3138,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_b2b_restore_cross_volume_before_source_delete_finalizes() {
+    async fn test_b2b_restore_cross_volume_before_source_delete_preserves_both_copies() {
         fault_injection::reset();
         fault_injection::set_force_cross_volume(true);
         let workspace = TestWorkspace::new("restore_before_delete");
@@ -2511,10 +3152,11 @@ mod tests {
         assert!(source.exists());
         assert!(entry.quarantine_path.exists());
 
-        let recovered = workspace.cleaner();
-        assert!(recovered.list_quarantine().unwrap().is_empty());
+        let recovered = Cleaner::new_with_dir(workspace.quarantine.clone())
+            .expect("Cleaner startup must remain available");
+        assert!(recovered.list_quarantine().is_err(), "Ambiguous recovery must fail closed");
         assert_eq!(std::fs::read(&source).unwrap(), b"payload");
-        assert!(!entry.quarantine_path.exists());
+        assert!(entry.quarantine_path.exists());
     }
 
     #[tokio::test]
@@ -2550,5 +3192,189 @@ mod tests {
         assert_eq!(std::fs::read(&source).unwrap(), b"existing destination");
         assert!(entry.quarantine_path.exists());
         assert_eq!(cleaner.list_quarantine().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_b2b_recovery_preserves_staging_without_recorded_identity() {
+        fault_injection::reset();
+        fault_injection::set_force_cross_volume(true);
+        let workspace = TestWorkspace::new("unowned_staging");
+        let source = workspace.source_file("doc.bin", b"payload");
+        let cleaner = workspace.cleaner();
+
+        fault_injection::set_point("quarantine_after_stage_copy");
+        assert!(cleaner.quarantine_file(&source).await.is_err());
+        assert!(source.exists());
+
+        let manifest_path = workspace.quarantine.join("manifest.json");
+        let mut manifest = QuarantineManifestV2::load_or_recover(&manifest_path).unwrap();
+        let key = manifest.entries.keys().next().unwrap().clone();
+        manifest
+            .entries
+            .get_mut(&key)
+            .unwrap()
+            .transaction
+            .staging_identity = None;
+        manifest.save_atomic(&manifest_path).unwrap();
+
+        let recovered = Cleaner::new_with_dir(workspace.quarantine.clone())
+            .expect("Cleaner startup must remain available");
+        assert!(recovered.list_quarantine().is_err(), "Unowned staging must fail closed");
+        assert!(source.exists());
+        assert!(quarantine_staging_path_for(&workspace.quarantine, &key).exists());
+    }
+
+    #[test]
+    fn test_b2b_handle_identity_and_no_replace_move() {
+        let workspace = TestWorkspace::new("handle_identity");
+        let source_path = workspace.source_file("source.bin", b"payload");
+        let other_path = workspace.source_file("other.bin", b"payload");
+        let mut source = LockedFile::open_source(&source_path).unwrap();
+        let other = LockedFile::open_read(&other_path).unwrap();
+        assert!(!source.identity.same_object(&other.identity));
+
+        let destination = workspace.source.join("destination.bin");
+        std::fs::write(&destination, b"existing destination").unwrap();
+        assert!(source.move_no_replace(&destination).is_err());
+        assert!(source_path.exists());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"existing destination");
+
+        std::fs::remove_file(&destination).unwrap();
+        source.move_no_replace(&destination).unwrap();
+        assert!(!source_path.exists());
+        assert_eq!(source.path, destination);
+
+        let mut moved = LockedFile::open_read(&destination).unwrap();
+        assert!(moved.identity.same_object(&source.identity));
+        let expected_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(b"payload");
+            format!("{:x}", hasher.finalize())
+        };
+        moved.verify_hash(&expected_hash, 7).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_b2b_cross_volume_preserves_ntfs_streams_and_attributes() {
+        use std::os::windows::fs::MetadataExt;
+        use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN};
+
+        fault_injection::reset();
+        fault_injection::set_force_cross_volume(true);
+        let workspace = TestWorkspace::new("ntfs_metadata");
+        let source = workspace.source_file("doc.bin", b"payload");
+        let source_stream = stream_path(&source, ":syspulse_test");
+        std::fs::write(&source_stream, b"alternate data").unwrap();
+        let source_wide = wide_path(&source);
+        unsafe {
+            SetFileAttributesW(
+                PCWSTR(source_wide.as_ptr()),
+                FILE_FLAGS_AND_ATTRIBUTES(FILE_ATTRIBUTE_HIDDEN.0),
+            )
+            .unwrap();
+        }
+
+        let cleaner = workspace.cleaner();
+        cleaner.quarantine_file(&source).await.unwrap();
+        assert!(!source.exists());
+
+        let destination = payload_files(&workspace).into_iter().next().unwrap();
+        let destination_stream = stream_path(&destination, ":syspulse_test");
+        assert_eq!(std::fs::read(destination_stream).unwrap(), b"alternate data");
+        let attributes = std::fs::metadata(&destination).unwrap().file_attributes();
+        assert_eq!(attributes & FILE_ATTRIBUTE_HIDDEN.0, FILE_ATTRIBUTE_HIDDEN.0);
+    }
+
+    #[test]
+    fn test_b2b_v1_backup_is_never_overwritten() {
+        let test_dir = TestQuarantineDir::new("v1_backup_conflict");
+        let manifest_file = test_dir.path.join("manifest.json");
+        let backup_file = test_dir.path.join("manifest.v1.bak");
+        let v1_content = r#"{"entries":{"archived.pdf":"C:\\docs\\archived.pdf"}}"#;
+        let backup_content = r#"{"entries":{"other.pdf":"C:\\docs\\other.pdf"}}"#;
+        std::fs::write(&manifest_file, v1_content).unwrap();
+        std::fs::write(&backup_file, backup_content).unwrap();
+
+        assert!(QuarantineManifestV2::load_or_recover(&manifest_file).is_err());
+        assert_eq!(std::fs::read_to_string(&manifest_file).unwrap(), v1_content);
+        assert_eq!(std::fs::read_to_string(&backup_file).unwrap(), backup_content);
+    }
+
+    #[test]
+    fn test_b2b_enumeration_errors_fail_closed() {
+        let test_dir = TestQuarantineDir::new("enumeration_error");
+        let not_a_directory = test_dir.path.join("file.bin");
+        std::fs::write(&not_a_directory, b"payload").unwrap();
+
+        assert!(QuarantineManifestV2::find_orphan_temps(&not_a_directory).is_err());
+        assert!(QuarantineManifestV2::find_existing_state_files(&not_a_directory).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_b2b_worker_holds_cross_process_lock() {
+        let Some(directory) = std::env::var_os("SYSPULSE_LOCK_TEST_DIR") else {
+            return;
+        };
+        let ready = std::env::var_os("SYSPULSE_LOCK_TEST_READY")
+            .map(PathBuf::from)
+            .expect("missing ready path");
+        let release = std::env::var_os("SYSPULSE_LOCK_TEST_RELEASE")
+            .map(PathBuf::from)
+            .expect("missing release path");
+        let lock_path = PathBuf::from(directory).join(QUARANTINE_LOCK_FILE);
+        let _lock = QuarantineProcessLock::acquire(&lock_path).expect("child must acquire lock");
+        std::fs::write(&ready, b"ready").unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !release.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for lock release"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_b2b_cross_process_lock_is_exclusive() {
+        use std::process::{Command, Stdio};
+
+        let workspace = TestWorkspace::new("process_lock");
+        let ready = workspace.root.join("ready");
+        let release = workspace.root.join("release");
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "modules::cleaner::tests::test_b2b_worker_holds_cross_process_lock",
+                "--nocapture",
+            ])
+            .env("SYSPULSE_LOCK_TEST_DIR", &workspace.quarantine)
+            .env("SYSPULSE_LOCK_TEST_READY", &ready)
+            .env("SYSPULSE_LOCK_TEST_RELEASE", &release)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to spawn lock worker");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !ready.exists() {
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                panic!("lock worker did not become ready");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        let lock_path = workspace.quarantine.join(QUARANTINE_LOCK_FILE);
+        let acquired = QuarantineProcessLock::acquire(&lock_path);
+        let exclusive = acquired.is_err();
+        drop(acquired);
+        std::fs::write(&release, b"release").unwrap();
+        let status = child.wait().unwrap();
+        assert!(status.success(), "lock worker failed");
+        assert!(exclusive, "second process must not acquire the quarantine lock");
     }
 }
