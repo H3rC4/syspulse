@@ -12,6 +12,7 @@ use modules::process_hunter::{ExportFormat, ProcessHunter, ProcessHunterCommand}
 use modules::sys_monitor::SysMonitor;
 use modules::tray::{self, TrayEvent};
 use slint::Model;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -69,6 +70,7 @@ async fn main() -> Result<()> {
     let cleaner = Arc::new(Cleaner::new().context("Failed to initialize Cleaner")?);
     let cpu_optimizer = Arc::new(Mutex::new(CpuOptimizer::new()));
     let sys_monitor = Arc::new(Mutex::new(SysMonitor::new_with_bus(Some(event_bus.clone()))));
+    let duplicate_scan_cache = Arc::new(Mutex::new(HashMap::<String, u64>::new()));
     
     // Shared pause flag for cleaner operations
     let pause_flag = Arc::new(AtomicBool::new(false));
@@ -244,6 +246,35 @@ async fn main() -> Result<()> {
         let pause_flag = pause_flag_clone.clone();
         let cancel_flag = cancel_flag_clone.clone();
         
+        let total_files = ui_weak
+            .upgrade()
+            .map(|ui| ui.get_cleaner_files_found())
+            .unwrap_or(0);
+        if total_files == 0 {
+            return;
+        }
+        let total_bytes_text = ui_weak
+            .upgrade()
+            .map(|ui| ui.get_cleaner_bytes_text().to_string())
+            .unwrap_or_default();
+
+        // Confirmation before irreversible operation (Block 4 / A11.13)
+        let confirmed = rfd::MessageDialog::new()
+            .set_title("Confirm System Cleaning")
+            .set_description(format!(
+                "Are you sure you want to clean {} files ({})?\nAll cleaned files will be safely sent to the Recycle Bin.",
+                total_files, total_bytes_text
+            ))
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show();
+
+        if !matches!(confirmed, rfd::MessageDialogResult::Yes) {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_cleaner_status("Cleaning cancelled by user".into());
+            }
+            return;
+        }
+
         // Reset cancel flag and start new operation
         cancel_flag.store(false, Ordering::SeqCst);
         pause_flag.store(false, Ordering::SeqCst);
@@ -256,12 +287,6 @@ async fn main() -> Result<()> {
             
             let token = tokio_util::sync::CancellationToken::new();
             let ui_weak_clone = ui_weak.clone();
-
-            // Get total files from scan before cleaning
-            let total_files = ui_weak_clone
-                .upgrade()
-                .map(|ui| ui.get_cleaner_files_found())
-                .unwrap_or(0);
 
             slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak_clone.upgrade() {
@@ -296,7 +321,7 @@ async fn main() -> Result<()> {
                             }
                         });
                     }
-                }, permanent_delete)  // NUEVO: pasar permanent_delete como último argumento
+                }, permanent_delete)
                 .await;
 
             slint::invoke_from_event_loop(move || {
@@ -306,18 +331,10 @@ async fn main() -> Result<()> {
                     ui.set_cleaner_progress(1.0);
                     match result {
                         Ok(r) => {
-                            let status = if permanent_delete {
-                                if r.errors.is_empty() {
-                                    format!("Permanently deleted {} files", r.files_found)
-                                } else {
-                                    format!("Permanently deleted {} files, {} errors", r.files_found, r.errors.len())
-                                }
+                            let status = if r.errors.is_empty() {
+                                format!("Sent {} files to Recycle Bin", r.files_found)
                             } else {
-                                if r.errors.is_empty() {
-                                    format!("Sent {} files to Recycle Bin", r.files_found)
-                                } else {
-                                    format!("Sent {} files to Recycle Bin, {} errors", r.files_found, r.errors.len())
-                                }
+                                format!("Sent {} files to Recycle Bin ({} errors: {})", r.files_found, r.errors.len(), r.errors[0])
                             };
                             ui.set_cleaner_status(status.into());
                             if !r.errors.is_empty() {
@@ -325,7 +342,7 @@ async fn main() -> Result<()> {
                             }
                         }
                         Err(e) => {
-                            ui.set_cleaner_status(format!("Error: {}", e).into());
+                            ui.set_cleaner_status(format!("Clean error: {:#}", e).into());
                         }
                     }
                 }
@@ -373,9 +390,9 @@ async fn main() -> Result<()> {
                             
                             // Sort by created date (oldest first), then by filename as tiebreaker
                             files.sort_by(|a, b| {
-                                let a_date = chrono::NaiveDateTime::parse_from_str(&a.created.to_string(), "%Y-%m-%d %H:%M")
+                                let a_date = chrono::NaiveDateTime::parse_from_str(a.created.as_ref(), "%Y-%m-%d %H:%M")
                                     .unwrap_or_default();
-                                let b_date = chrono::NaiveDateTime::parse_from_str(&b.created.to_string(), "%Y-%m-%d %H:%M")
+                                let b_date = chrono::NaiveDateTime::parse_from_str(b.created.as_ref(), "%Y-%m-%d %H:%M")
                                     .unwrap_or_default();
                                 let date_cmp = a_date.cmp(&b_date);
                                 if date_cmp == std::cmp::Ordering::Equal {
@@ -409,6 +426,7 @@ async fn main() -> Result<()> {
                             updated_groups.push(DuplicateGroupData {
                                 hash: group.hash,
                                 size: group.size,
+                                raw_size: group.raw_size,
                                 files: slint::ModelRc::new(slint::VecModel::from(updated_files)),
                             });
                         } else {
@@ -445,9 +463,9 @@ async fn main() -> Result<()> {
                             
                             // Sort by created date (newest first), then by filename as tiebreaker
                             files.sort_by(|a, b| {
-                                let a_date = chrono::NaiveDateTime::parse_from_str(&a.created.to_string(), "%Y-%m-%d %H:%M")
+                                let a_date = chrono::NaiveDateTime::parse_from_str(a.created.as_ref(), "%Y-%m-%d %H:%M")
                                     .unwrap_or_default();
-                                let b_date = chrono::NaiveDateTime::parse_from_str(&b.created.to_string(), "%Y-%m-%d %H:%M")
+                                let b_date = chrono::NaiveDateTime::parse_from_str(b.created.as_ref(), "%Y-%m-%d %H:%M")
                                     .unwrap_or_default();
                                 let date_cmp = b_date.cmp(&a_date);
                                 if date_cmp == std::cmp::Ordering::Equal {
@@ -481,6 +499,7 @@ async fn main() -> Result<()> {
                             updated_groups.push(DuplicateGroupData {
                                 hash: group.hash,
                                 size: group.size,
+                                raw_size: group.raw_size,
                                 files: slint::ModelRc::new(slint::VecModel::from(updated_files)),
                             });
                         } else {
@@ -521,6 +540,7 @@ async fn main() -> Result<()> {
                             updated_groups.push(DuplicateGroupData {
                                 hash: group.hash,
                                 size: group.size,
+                                raw_size: group.raw_size,
                                 files: slint::ModelRc::new(slint::VecModel::from(files)),
                             });
                         } else {
@@ -534,12 +554,26 @@ async fn main() -> Result<()> {
         });
     });
 
-    // ── Callback: Open File ─
+    // ── Callback: Open File (Safe file opening: reveal in Explorer for quarantine / protected files) ─
     ui.on_open_file(move |path: slint::SharedString| {
-        let path = path.to_string();
-        if let Err(e) = open::that(&path) {
-            tracing::error!("Failed to open file {}: {}", path, e);
+        let path_str = path.to_string();
+        let p = std::path::PathBuf::from(&path_str);
+        if let Ok(qdir) = modules::config::Settings::quarantine_dir() {
+            if p.starts_with(&qdir) || modules::cleaner::is_protected_path(&p, Some(&qdir)) {
+                tracing::info!("File {:?} is quarantined or protected; safely revealing in file manager", p);
+                reveal_in_file_manager(&p);
+                return;
+            }
         }
+        if let Err(e) = open::that(&path_str) {
+            tracing::error!("Failed to open file {}: {}", path_str, e);
+            reveal_in_file_manager(&p);
+        }
+    });
+
+    ui.on_reveal_file(move |path: slint::SharedString| {
+        let p = std::path::PathBuf::from(path.as_str());
+        reveal_in_file_manager(&p);
     });
 
     // ── Callback: Toggle Pause ──
@@ -567,10 +601,12 @@ async fn main() -> Result<()> {
     let ui_weak = ui.as_weak();
     let cleaner_clone = cleaner.clone();
     let pause_flag_clone = pause_flag.clone();
+    let duplicate_scan_cache_clone = duplicate_scan_cache.clone();
     ui.on_scan_duplicates(move |path: slint::SharedString| {
         let ui_weak = ui_weak.clone();
         let cleaner = cleaner_clone.clone();
         let pause_flag = pause_flag_clone.clone();
+        let duplicate_scan_cache = duplicate_scan_cache_clone.clone();
         let path = std::path::PathBuf::from(path.to_string());
         tokio::spawn(async move {
             let token = tokio_util::sync::CancellationToken::new();
@@ -613,6 +649,15 @@ async fn main() -> Result<()> {
                     ui.set_cleaner_progress(1.0);
                     match result {
                         Ok(groups) => {
+                            // R08: Guardar en cache original scan data
+                            {
+                                let mut cache = duplicate_scan_cache.lock().unwrap();
+                                cache.clear();
+                                for g in &groups {
+                                    cache.insert(g.hash.clone(), g.size);
+                                }
+                            }
+
                             // Calcular total de MB de duplicados
                             let total_bytes: u64 = groups.iter().map(|g| g.size).sum();
                             let total_mb = modules::cleaner::format_bytes(total_bytes);
@@ -624,6 +669,7 @@ async fn main() -> Result<()> {
                                         .map(|g| DuplicateGroupData {
                                             hash: g.hash.into(),
                                             size: modules::cleaner::format_bytes(g.size).into(),
+                                            raw_size: g.size as f32,
                                             files: slint::ModelRc::new(slint::VecModel::from(
                                                 g.files
                                                     .into_iter()
@@ -658,9 +704,11 @@ async fn main() -> Result<()> {
     // ── Callback: Quarantine Selected Duplicates ──
     let ui_weak = ui.as_weak();
     let cleaner_clone = cleaner.clone();
+    let duplicate_scan_cache_clone = duplicate_scan_cache.clone();
     ui.on_quarantine_selected_duplicates(move || {
         let ui_weak = ui_weak.clone();
         let cleaner = cleaner_clone.clone();
+        let scan_cache_clone = duplicate_scan_cache_clone.clone();
         tokio::spawn(async move {
             let token = tokio_util::sync::CancellationToken::new();
             let (tx, rx) = tokio::sync::oneshot::channel();
@@ -674,6 +722,7 @@ async fn main() -> Result<()> {
                     .unwrap_or_default();
 
                 // Extract data on the UI thread (ModelRc is not Send)
+                let scan_cache = scan_cache_clone.lock().unwrap();
                 let mut duplicate_groups = Vec::new();
                 for i in 0..groups.row_count() {
                     if let Some(group) = groups.row_data(i) {
@@ -687,9 +736,11 @@ async fn main() -> Result<()> {
                                 });
                             }
                         }
+                        let hash_str = group.hash.to_string();
+                        let size = scan_cache.get(&hash_str).copied().unwrap_or(group.raw_size as u64);
                         duplicate_groups.push(models::DuplicateGroup {
-                            hash: group.hash.to_string(),
-                            size: 0,
+                            hash: hash_str,
+                            size,
                             files,
                         });
                     }
@@ -700,6 +751,38 @@ async fn main() -> Result<()> {
             let duplicate_groups = rx.await.unwrap_or_default();
 
             if !duplicate_groups.is_empty() {
+                let selected_count: usize = duplicate_groups
+                    .iter()
+                    .map(|g| g.files.iter().filter(|f| f.selected).count())
+                    .sum();
+                if selected_count == 0 {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_cleaner_status("No duplicate files selected for quarantine".into());
+                        }
+                    });
+                    return;
+                }
+
+                // Confirmation before irreversible operation (Block 4 / A11.13)
+                let confirmed = rfd::MessageDialog::new()
+                    .set_title("Confirm Quarantine")
+                    .set_description(format!(
+                        "Are you sure you want to move {} selected duplicate file(s) to Quarantine?",
+                        selected_count
+                    ))
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .show();
+
+                if !matches!(confirmed, rfd::MessageDialogResult::Yes) {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_cleaner_status("Quarantine cancelled by user".into());
+                        }
+                    });
+                    return;
+                }
+
                 match cleaner
                     .quarantine_selected_duplicates(&duplicate_groups, token)
                     .await
@@ -711,20 +794,14 @@ async fn main() -> Result<()> {
                         let quarantine_entries = cleaner.list_quarantine().unwrap_or_default();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_weak.upgrade() {
-                                // Calcular tamaño total de cuarentena
                                 let total_bytes: u64 = quarantine_entries.iter().map(|e| e.size).sum();
                                 let total_size = modules::cleaner::format_bytes(total_bytes);
                                 
                                 let slint_entries: slint::ModelRc<QuarantineEntryData> =
                                     slint::ModelRc::new(slint::VecModel::from(
                                         quarantine_entries
-                                            .into_iter()
-                                            .map(|e| QuarantineEntryData {
-                                                original_path: e.original_path.to_string_lossy().to_string().into(),
-                                                quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
-                                                size: modules::cleaner::format_bytes(e.size).into(),
-                                                quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
-                                            })
+                                            .iter()
+                                            .map(map_quarantine_entry)
                                             .collect::<Vec<_>>(),
                                     ));
                                 ui.set_quarantine_entries(slint_entries);
@@ -734,7 +811,12 @@ async fn main() -> Result<()> {
                         });
                     }
                     Err(e) => {
-                        tracing::error!("Failed to quarantine duplicates: {}", e);
+                        tracing::error!("Failed to quarantine duplicates: {:#}", e);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_cleaner_status(format!("Quarantine error: {:#}", e).into());
+                            }
+                        });
                     }
                 }
             }
@@ -790,13 +872,8 @@ async fn main() -> Result<()> {
                         let slint_entries: slint::ModelRc<QuarantineEntryData> =
                             slint::ModelRc::new(slint::VecModel::from(
                                 entries
-                                    .into_iter()
-                                    .map(|e| QuarantineEntryData {
-                                        original_path: e.original_path.to_string_lossy().to_string().into(),
-                                        quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
-                                        size: modules::cleaner::format_bytes(e.size).into(),
-                                        quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
-                                    })
+                                    .iter()
+                                    .map(map_quarantine_entry)
                                     .collect::<Vec<_>>(),
                             ));
                         ui.set_quarantine_entries(slint_entries);
@@ -849,20 +926,14 @@ async fn main() -> Result<()> {
             let entries = cleaner.list_quarantine().unwrap_or_default();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
-                    // Calcular tamaño total de cuarentena
                     let total_bytes: u64 = entries.iter().map(|e| e.size).sum();
                     let total_size = modules::cleaner::format_bytes(total_bytes);
                     
                     let slint_entries: slint::ModelRc<QuarantineEntryData> =
                         slint::ModelRc::new(slint::VecModel::from(
                             entries
-                                .into_iter()
-                                .map(|e| QuarantineEntryData {
-                                    original_path: e.original_path.to_string_lossy().to_string().into(),
-                                    quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
-                                    size: modules::cleaner::format_bytes(e.size).into(),
-                                    quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
-                                })
+                                .iter()
+                                .map(map_quarantine_entry)
                                 .collect::<Vec<_>>(),
                         ));
                     ui.set_quarantine_entries(slint_entries);
@@ -872,19 +943,25 @@ async fn main() -> Result<()> {
         });
     });
 
-    // ─ Callback: Restore Quarantine ──
+    // ── Callback: Restore Quarantine (Stable file identifier R06 & UI error reporting A11.14) ──
     let cleaner_clone = cleaner.clone();
     let ui_weak = ui.as_weak();
-    ui.on_restore_quarantine(move |index| {
+    ui.on_restore_quarantine(move |key: slint::SharedString| {
+        let key_str = key.to_string();
         let cleaner = cleaner_clone.clone();
         let ui_weak = ui_weak.clone();
         tokio::spawn(async move {
             let entries = cleaner.list_quarantine().unwrap_or_default();
-            if let Some(entry) = entries.get(index as usize) {
-                if let Err(e) = cleaner.restore_from_quarantine(entry) {
-                    tracing::error!("Failed to restore from quarantine: {}", e);
-                }
-            }
+            let target = entries.iter().find(|e| {
+                e.quarantine_path.file_name().map(|n| n.to_string_lossy().to_string()) == Some(key_str.clone())
+                || e.quarantine_path.to_string_lossy() == key_str
+            });
+
+            let restore_res = match target {
+                Some(entry) => cleaner.restore_from_quarantine(entry),
+                None => Err(anyhow::anyhow!("Quarantine entry {:?} not found", key_str)),
+            };
+
             let updated_entries = cleaner.list_quarantine().unwrap_or_default();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
@@ -893,35 +970,60 @@ async fn main() -> Result<()> {
                     let slint_entries: slint::ModelRc<QuarantineEntryData> =
                         slint::ModelRc::new(slint::VecModel::from(
                             updated_entries
-                                .into_iter()
-                                .map(|e| QuarantineEntryData {
-                                    original_path: e.original_path.to_string_lossy().to_string().into(),
-                                    quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
-                                    size: modules::cleaner::format_bytes(e.size).into(),
-                                    quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
-                                })
+                                .iter()
+                                .map(map_quarantine_entry)
                                 .collect::<Vec<_>>(),
                         ));
                     ui.set_quarantine_entries(slint_entries);
                     ui.set_quarantine_total_size(total_size.into());
+                    match restore_res {
+                        Ok(()) => ui.set_cleaner_status("File restored successfully".into()),
+                        Err(e) => {
+                            tracing::error!("Failed to restore from quarantine: {:#}", e);
+                            ui.set_cleaner_status(format!("Restore failed: {:#}", e).into());
+                        }
+                    }
                 }
             });
         });
     });
 
-    // ── Callback: Delete Quarantine ──
+    // ── Callback: Delete Quarantine (Confirmation A11.13, Stable key R06, UI error reporting A11.14) ──
     let cleaner_clone = cleaner.clone();
     let ui_weak = ui.as_weak();
-    ui.on_delete_quarantine(move |index| {
+    ui.on_delete_quarantine(move |key: slint::SharedString| {
+        let key_str = key.to_string();
         let cleaner = cleaner_clone.clone();
         let ui_weak = ui_weak.clone();
+
+        // Confirmation before irreversible operation (Block 4 / A11.13)
+        let confirmed = rfd::MessageDialog::new()
+            .set_title("Confirm Delete")
+            .set_description("Are you sure you want to remove this file from Quarantine?\nIt will be sent to the Recycle Bin.")
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show();
+
+        if !matches!(confirmed, rfd::MessageDialogResult::Yes) {
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_cleaner_status("Deletion cancelled by user".into());
+                }
+            });
+            return;
+        }
+
         tokio::spawn(async move {
             let entries = cleaner.list_quarantine().unwrap_or_default();
-            if let Some(entry) = entries.get(index as usize) {
-                if let Err(e) = cleaner.delete_quarantine_permanently(entry) {
-                    tracing::error!("Failed to delete from quarantine: {}", e);
-                }
-            }
+            let target = entries.iter().find(|e| {
+                e.quarantine_path.file_name().map(|n| n.to_string_lossy().to_string()) == Some(key_str.clone())
+                || e.quarantine_path.to_string_lossy() == key_str
+            });
+
+            let delete_res = match target {
+                Some(entry) => cleaner.delete_quarantine_permanently(entry),
+                None => Err(anyhow::anyhow!("Quarantine entry {:?} not found", key_str)),
+            };
+
             let updated_entries = cleaner.list_quarantine().unwrap_or_default();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
@@ -930,17 +1032,19 @@ async fn main() -> Result<()> {
                     let slint_entries: slint::ModelRc<QuarantineEntryData> =
                         slint::ModelRc::new(slint::VecModel::from(
                             updated_entries
-                                .into_iter()
-                                .map(|e| QuarantineEntryData {
-                                    original_path: e.original_path.to_string_lossy().to_string().into(),
-                                    quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
-                                    size: modules::cleaner::format_bytes(e.size).into(),
-                                    quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
-                                })
+                                .iter()
+                                .map(map_quarantine_entry)
                                 .collect::<Vec<_>>(),
                         ));
                     ui.set_quarantine_entries(slint_entries);
                     ui.set_quarantine_total_size(total_size.into());
+                    match delete_res {
+                        Ok(()) => ui.set_cleaner_status("File sent to Recycle Bin".into()),
+                        Err(e) => {
+                            tracing::error!("Failed to delete from quarantine: {:#}", e);
+                            ui.set_cleaner_status(format!("Delete failed: {:#}", e).into());
+                        }
+                    }
                 }
             });
         });
@@ -1384,4 +1488,46 @@ async fn main() -> Result<()> {
 
     tracing::info!("SysPulse shutting down");
     Ok(())
+}
+
+fn map_quarantine_entry(e: &models::QuarantineEntry) -> QuarantineEntryData {
+    QuarantineEntryData {
+        key: e
+            .quarantine_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default()
+            .into(),
+        original_path: e.original_path.to_string_lossy().to_string().into(),
+        quarantine_path: e.quarantine_path.to_string_lossy().to_string().into(),
+        size: modules::cleaner::format_bytes(e.size).into(),
+        quarantined_at: modules::cleaner::format_quarantined_date(e.quarantined_at).into(),
+    }
+}
+
+fn reveal_in_file_manager(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        let _ = Command::new("explorer")
+            .arg(format!("/select,\"{}\"", path.display()))
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        let _ = Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use std::process::Command;
+        if let Some(parent) = path.parent() {
+            let _ = Command::new("xdg-open")
+                .arg(parent)
+                .spawn();
+        }
+    }
 }

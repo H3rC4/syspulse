@@ -63,10 +63,10 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
 | **A11.10** | Cross-volume restoration | **CONTENIDO TEMPORALMENTE** (Transferencia cross-volume destructiva deshabilitada) | **Bloque 2** |
 | **A11.11** | Manifest/file consistency | Corregido en B2B | Bloque 2 |
 | **A11.12** | Recycle Bin semantics | Corregido en B2B | Bloque 2 |
-| **A11.13** | User confirmations | Pendiente de corrección | Bloque 4 |
-| **A11.14** | UI error reporting | Pendiente de corrección | Bloque 4 |
-| **A11.15** | Unsafe file opening | Pendiente de corrección | Bloque 4 |
-| **A11.16** | Regression tests | En progreso (44 tests de cleaner; 89 totales) | Bloque 5 |
+| **A11.13** | User confirmations | Implementado (diálogos modales rfd antes de limpiar, cuarentenar o borrar) | Bloque 4 |
+| **A11.14** | UI error reporting | Implementado (propagación explícita de fallos en barra de estado y logs) | Bloque 4 |
+| **A11.15** | Unsafe file opening | Implementado (botón Reveal en explorador; bloqueo de ejecución arbitraria) | Bloque 4 |
+| **A11.16** | Regression tests | En progreso (46 tests de cleaner; 91 totales) | Bloque 5 |
 
 ---
 
@@ -109,26 +109,29 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
    - **Retained copy validation (A11.05):** Verificación exhaustiva de al menos una copia retenida independiente, válida e inalterada con descriptor protegido (`open_protected_read`) activo durante toda la operación de grupo, con comprobación anti-colisión de identidad de objeto (`identity.same_object`).
    - **Prevent selecting all copies (A11.06):** Verificación obligatoria en backend de que `selected_count < total_count`, rechazando a nivel de motor cualquier solicitud que pretenda poner en cuarentena o eliminar todas las copias de un grupo.
    - **Suite de pruebas:** 6 pruebas unitarias nuevas agregadas (44 pruebas de cleaner; 89 en total en el workspace).
-4. **Bloque 4: Seguridad de interfaz (PENDIENTE)**
-   - User confirmations (A11.13).
-   - UI error reporting (A11.14).
-   - Unsafe file opening (A11.15).
-   - Tratamiento de R06 (Unstable UI row indexes) y sincronización de sliders/retención en Slint UI sin falsas promesas.
+4. **Bloque 4: Seguridad de interfaz (EJECUTADO)**
+   - **User confirmations (A11.13):** Confirmación modal mediante `rfd::MessageDialog` con conteo exacto de archivos y bytes antes de proceder con limpieza de temporales, movimiento de duplicados a cuarentena y borrado a papelera desde cuarentena.
+   - **UI error reporting (A11.14):** Notificación visual clara en la barra de estado de Slint ante fallos o errores parciales en operaciones de limpieza, cuarentena, restauración y borrado permanente.
+   - **Unsafe file opening (A11.15):** Acción "Reveal" en lugar de "Open" para archivos en cuarentena y rutas protegidas (`explorer /select, <path>`), impidiendo la ejecución inadvertida de binarios o scripts no confiables.
+   - **Tratamiento de R06 (Unstable UI row indexes):** Uso de identificador unívoco y estable (`key: string`, nombre de archivo en cuarentena) en lugar de índices numéricos de fila en callbacks de `restore` y `delete`. Desactivación explícita del checkbox de borrado permanente en Settings con texto explicativo de seguridad (R10) y protección de rutas de datos de SysPulse (R09).
 5. **Bloque 5: Validación integral (PENDIENTE)**
    - Regression tests (A11.16). Suite completa de pruebas de estrés, escenarios de fallo de disco y cobertura unitaria/integración.
 
 ---
 
-## 5. Registro Separado de Revisiones Técnicas de Bloque 2B (R01 – R07)
+## 5. Registro Separado de Revisiones Técnicas de Bloque 2B y Bloque 4 (R01 – R10)
 
-| ID | Definición Canónica | Estado en Bloque 2B | Resolución / Notas |
+| ID | Definición Canónica | Estado | Resolución / Notas |
 |---|---|:---:|---|
 | **R01** | Destructive recovery | ✅ Corregido | Transaccionalidad Staged/Restoring, recuperación fail-closed, preservación de staging sin promover copias incompletas. |
 | **R02** | File identity/races | ✅ Corregido | Identidad unívoca vía handle Win32 (`LockedFile`), `FileRenameInfo` sin reemplazo y bloqueo `QuarantineProcessLock`. |
 | **R03** | Staging ownership | ✅ Corregido | Verificación exhaustiva de identidad y pertenencia de staging antes de cualquier operación; fail-closed ante ambigüedad. |
 | **R04** | NTFS metadata | 🟡 **CONTENIDO TEMPORALMENTE** | Preservación de ADS, atributos y descriptores de seguridad implementada; transferencias destructivas cross-volume deshabilitadas preventivamente. |
 | **R05** | Startup degradation | ✅ Corregido | Retorno inmediato en modo degradado si falla adquisición de lock; nunca se lee, migra ni escribe manifiesto sin lock. |
-| **R06** | Unstable UI row indexes | 🟡 Pendiente | Reservado para Bloque 4 (Seguridad de interfaz en Slint UI). |
+| **R06** | Unstable UI row indexes | ✅ Corregido | Uso de clave estable `entry.key` en UI Slint para restaurar y eliminar, previniendo desfases por ordenación o recargas asíncronas. |
 | **R07** | Manifest validation | ✅ Corregido | Validación estricta contra control/lock files (`QUARANTINE_LOCK_FILE`, staging, aliases 8.3) y rechazo fail-closed de claves duplicadas/colisionantes. |
+| **R08** | Duplicate size preservation | ✅ Corregido | Caché de tamaños escaneados y campo `raw-size: float` para preservar bytes exactos sin parsear cadenas formateadas. |
+| **R09** | Application data protection | ✅ Corregido | Protección canónica en `is_protected_path` para `app_data_dir`, `db_path`, `logs_dir` y `settings_path`. |
+| **R10** | Backend permanent delete disabled | ✅ Corregido | Desactivación del borrado físico en backend y UI; todas las limpiezas se enrutan de forma segura a la Papelera de Reciclaje. |
 
 > **Nota de Seguridad sobre Eliminación:** En `delete_quarantine_permanently` se rechazó y revirtió la eliminación física irreversible introducida sin autorización, restableciendo la delegación segura a la Papelera de Reciclaje de Windows (`trash::delete`) con verificación previa de clave, registro en manifiesto y reparse points (A11.12).

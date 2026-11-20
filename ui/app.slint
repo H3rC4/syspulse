@@ -87,10 +87,12 @@ export struct DuplicateFileData {
 export struct DuplicateGroupData {
     hash: string,
     size: string,
+    raw-size: float,
     files: [DuplicateFileData],
 }
 
 export struct QuarantineEntryData {
+    key: string,
     original-path: string,
     quarantine-path: string,
     size: string,
@@ -408,8 +410,9 @@ component CleanerTab inherits Rectangle {
     callback keep-newest(int);
     callback quarantine-selected();
     callback load-quarantine();
-    callback restore(int);
-    callback delete(int);
+    callback restore(string);
+    callback delete(string);
+    callback reveal-file(string);
 
     VerticalLayout {
         padding-left: 36px;
@@ -635,9 +638,9 @@ component CleanerTab inherits Rectangle {
                                 Text { text: entry.size + " \u{2022} " + entry.quarantined-at; color: Theme.text-secondary; font-size: 11px; }
                             }
 
-                            NeonButton { text: "Open"; primary: false; clicked => { open-file(entry.quarantine-path); } }
-                            NeonButton { text: "Restore"; primary: false; clicked => { restore(index); } }
-                            NeonButton { text: "Delete"; primary: false; clicked => { delete(index); } }
+                            NeonButton { text: "Reveal"; primary: false; clicked => { reveal-file(entry.quarantine-path); } }
+                            NeonButton { text: "Restore"; primary: false; clicked => { restore(entry.key); } }
+                            NeonButton { text: "Delete"; primary: false; clicked => { delete(entry.key); } }
                         }
                     }
                 }
@@ -793,13 +796,13 @@ component SettingsTab inherits Rectangle {
                 Rectangle { height: 1px; background: Theme.border-subtle; }
 
                 SettingRow {
-                    label: "Eliminar permanentemente (sin papelera)";
-                    CheckBox { checked <=> permanent-delete; }
+                    label: "Permanent delete (bypass Recycle Bin) [Disabled]";
+                    CheckBox { checked <=> permanent-delete; enabled: false; }
                 }
 
                 Text {
-                    text: "\u{26A0} Los archivos se eliminan directo sin pasar por la papelera. Irreversible.";
-                    color: Theme.neon-orange;
+                    text: "\u{2139} Direct permanent deletion is disabled for safety. All cleanups are sent to the Recycle Bin.";
+                    color: Theme.text-secondary;
                     font-size: 11px;
                     font-weight: 500;
                     wrap: word-wrap;
@@ -1427,8 +1430,9 @@ export component AppWindow inherits Window {
     callback keep-newest(int);
     callback quarantine-selected-duplicates();
     callback load-quarantine();
-    callback restore-quarantine(int);
-    callback delete-quarantine(int);
+    callback restore-quarantine(string);
+    callback delete-quarantine(string);
+    callback reveal-file(string);
 
     in property <[ProcessEntryData]> process-entries: [];
     callback refresh-processes();
@@ -1700,8 +1704,9 @@ export component AppWindow inherits Window {
                 keep-newest(index) => { root.keep-newest(index); }
                 quarantine-selected => { root.quarantine-selected-duplicates(); }
                 load-quarantine => { root.load-quarantine(); }
-                restore(index) => { root.restore-quarantine(index); }
-                delete(index) => { root.delete-quarantine(index); }
+                restore(key) => { root.restore-quarantine(key); }
+                delete(key) => { root.delete-quarantine(key); }
+                reveal-file(path) => { root.reveal-file(path); }
             }
 
             if root.current-tab == 3: CpuFocusTab {

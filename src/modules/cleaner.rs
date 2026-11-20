@@ -215,47 +215,61 @@ fn ensure_not_reparse(path: &Path, label: &str) -> Result<()> {
 }
 
 fn ensure_not_hard_link(path: &Path) -> Result<()> {
-    #[cfg(windows)]
-    {
-        let wide = wide_path(path);
-        let handle = unsafe {
-            CreateFileW(
-                PCWSTR(wide.as_ptr()),
-                0,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                None,
-                OPEN_EXISTING,
-                FILE_FLAG_OPEN_REPARSE_POINT,
-                HANDLE::default(),
-            )
-        };
-        if let Ok(handle) = handle {
-            let mut info = BY_HANDLE_FILE_INFORMATION::default();
-            let res = unsafe { GetFileInformationByHandle(handle, &mut info) };
-            let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
-            if res.is_ok() && info.nNumberOfLinks > 1 {
-                anyhow::bail!(
-                    "File {:?} has {} hard links; rejecting destructive operation on multi-linked file",
-                    path,
-                    info.nNumberOfLinks
-                );
+    match std::fs::symlink_metadata(path) {
+        Ok(_meta) => {
+            #[cfg(windows)]
+            {
+                let wide = wide_path(path);
+                let handle = unsafe {
+                    CreateFileW(
+                        PCWSTR(wide.as_ptr()),
+                        0,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        None,
+                        OPEN_EXISTING,
+                        FILE_FLAG_OPEN_REPARSE_POINT,
+                        HANDLE::default(),
+                    )
+                };
+                match handle {
+                    Ok(handle) => {
+                        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+                        let res = unsafe { GetFileInformationByHandle(handle, &mut info) };
+                        let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
+                        if res.is_err() {
+                            anyhow::bail!("Failed to query file information for {:?}; failing closed for hard link inspection", path);
+                        }
+                        if info.nNumberOfLinks > 1 {
+                            anyhow::bail!(
+                                "File {:?} has {} hard links; rejecting destructive operation on multi-linked file",
+                                path,
+                                info.nNumberOfLinks
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        anyhow::bail!("Failed to open handle to inspect hard links for {:?} (error: {}); failing closed for safety", path, e);
+                    }
+                }
             }
+            #[cfg(not(windows))]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if meta.is_file() && meta.nlink() > 1 {
+                    anyhow::bail!(
+                        "File {:?} has {} hard links; rejecting destructive operation on multi-linked file",
+                        path,
+                        meta.nlink()
+                    );
+                }
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            anyhow::bail!("Failed to inspect metadata for {:?} (error: {}); failing closed for hard link inspection", path, error);
         }
     }
-    #[cfg(not(windows))]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if let Ok(meta) = std::fs::symlink_metadata(path) {
-            if meta.is_file() && meta.nlink() > 1 {
-                anyhow::bail!(
-                    "File {:?} has {} hard links; rejecting destructive operation on multi-linked file",
-                    path,
-                    meta.nlink()
-                );
-            }
-        }
-    }
-    Ok(())
 }
 
 pub fn is_protected_path(path: &Path, quarantine_dir: Option<&Path>) -> bool {
@@ -273,6 +287,37 @@ pub fn is_protected_path(path: &Path, quarantine_dir: Option<&Path>) -> bool {
 
     if path.parent().is_none() || path.components().count() <= 1 {
         return true;
+    }
+
+    // Protect actual SysPulse application data paths (R09)
+    if let Ok(app_data) = crate::modules::config::Settings::app_data_dir() {
+        let app_data_canon = app_data.canonicalize().unwrap_or(app_data);
+        if path == app_data_canon {
+            return true;
+        }
+        if let Ok(db) = crate::modules::config::Settings::db_path() {
+            let db_canon = db.canonicalize().unwrap_or(db);
+            if path == db_canon {
+                return true;
+            }
+        }
+        if let Ok(logs) = crate::modules::config::Settings::logs_dir() {
+            let logs_canon = logs.canonicalize().unwrap_or(logs);
+            if path.starts_with(&logs_canon) {
+                return true;
+            }
+        }
+    }
+    if let Ok(settings_file) = crate::modules::config::Settings::settings_path() {
+        let settings_canon = settings_file.canonicalize().unwrap_or(settings_file);
+        if path == settings_canon {
+            return true;
+        }
+        if let Some(cfg_parent) = settings_canon.parent() {
+            if path == cfg_parent {
+                return true;
+            }
+        }
     }
 
     #[cfg(windows)]
@@ -2071,6 +2116,10 @@ impl Cleaner {
                             }
 
                             // Delegar a la Papelera de Reciclaje para preservar la recuperabilidad y evitar borrado irreversible
+                            // R10: Borrado permanente destructivo directo bloqueado en backend por seguridad
+                            if _permanent_delete {
+                                tracing::warn!("Direct permanent deletion is disabled in backend for safety; routing {:?} to Recycle Bin", file_path);
+                            }
                             let path_clone = file_path.clone();
                             let delete_result: Result<(), String> = tokio::task::spawn_blocking(move || {
                                 trash::delete(&path_clone).map_err(|e| e.to_string())
@@ -2119,6 +2168,9 @@ impl Cleaner {
                         continue;
                     }
 
+                    if _permanent_delete {
+                        tracing::warn!("Direct permanent deletion is disabled in backend for safety; routing {:?} to Recycle Bin", file_path);
+                    }
                     let path_clone = file_path.clone();
                     let delete_result: Result<(), String> = tokio::task::spawn_blocking(move || {
                         trash::delete(&path_clone).map_err(|e| e.to_string())
@@ -4062,5 +4114,54 @@ mod tests {
             err
         );
         assert!(file1.exists());
+    }
+
+    #[test]
+    fn test_b4_syspulse_actual_data_paths_protected() {
+        use crate::modules::config::Settings;
+        if let Ok(app_data) = Settings::app_data_dir() {
+            assert!(is_protected_path(&app_data, None));
+        }
+        if let Ok(db) = Settings::db_path() {
+            assert!(is_protected_path(&db, None));
+        }
+        if let Ok(cfg) = Settings::settings_path() {
+            assert!(is_protected_path(&cfg, None));
+        }
+    }
+
+    #[test]
+    fn test_b4_fail_closed_on_hard_link_inspection_error() {
+        let workspace = TestWorkspace::new("hard_link_inspection");
+        let file1 = workspace.source_file("original.txt", b"hardlink test");
+        let link_path = workspace.source.join("hardlink_copy.txt");
+
+        // Normal single-link file must pass
+        assert!(ensure_not_hard_link(&file1).is_ok());
+
+        // Nonexistent file must pass without panic/false rejection
+        let nonexistent = workspace.source.join("does_not_exist.tmp");
+        assert!(ensure_not_hard_link(&nonexistent).is_ok());
+
+        #[cfg(windows)]
+        {
+            use windows::core::HSTRING;
+            use windows::Win32::Storage::FileSystem::CreateHardLinkW;
+
+            let file1_w = HSTRING::from(file1.to_string_lossy().as_ref());
+            let link_w = HSTRING::from(link_path.to_string_lossy().as_ref());
+            let res = unsafe { CreateHardLinkW(&link_w, &file1_w, None) };
+            if res.is_ok() {
+                assert!(ensure_not_hard_link(&file1).is_err(), "Must reject multi-linked file");
+                assert!(ensure_not_hard_link(&link_path).is_err(), "Must reject hard link copy");
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if std::fs::hard_link(&file1, &link_path).is_ok() {
+                assert!(ensure_not_hard_link(&file1).is_err(), "Must reject multi-linked file");
+                assert!(ensure_not_hard_link(&link_path).is_err(), "Must reject hard link copy");
+            }
+        }
     }
 }
