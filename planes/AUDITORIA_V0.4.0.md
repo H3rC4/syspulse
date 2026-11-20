@@ -49,24 +49,24 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
 
 ## 3. Desglose de Subhallazgos de Smart Cleaner (A11.01 – A11.16)
 
-| Subhallazgo | Descripción Técnica | Estado Actual | Bloque Asignado |
+| Subhallazgo | Definición Canónica | Estado Actual | Bloque Asignado |
 |---|---|:---:|:---:|
-| **A11.01** | Rutas por defecto y escaneo de temporales sin validación estricta de cruce de junctions / symlinks hacia ubicaciones protegidas. | Pendiente de corrección | Bloque 3 |
-| **A11.02** | Tratamiento no diferenciado de reparse points y enlaces simbólicos en la limpieza de temporales. | Pendiente de corrección | Bloque 3 |
-| **A11.03** | Condición TOCTOU en `clean_paths` entre escaneo preliminar y la invocación de `remove_file` / `trash::delete`. | Pendiente de corrección | Bloque 3 |
-| **A11.04** | Validación insuficiente de integridad y condición TOCTOU en detección de duplicados (tamaño, modified_time y pre-hash). | Pendiente de corrección | Bloque 3 (Obligatorio) |
-| **A11.05** | Gestión de cancelaciones abruptas en `quarantine_selected_duplicates` dejando lotes a medio procesar. | Mitigado en B2B (transacción atómica por archivo) | Bloque 2 |
-| **A11.06** | Generación de nombres en cuarentena basada en truncado de hash (16 chars) + PID, vulnerable a colisiones inter-sesión o reciclaje. | Pendiente de corrección | Bloque 3 |
-| **A11.07** | Movimiento cross-device vía `copy` + `remove_file` sin verificación de suma de verificación ni atomicidad. | Corregido en B2B | Bloque 2 |
-| **A11.08** | Restauración desde cuarentena mediante `rename` sin exclusión mutua atómica, susceptible de sobrescribir archivos destino existentes ante carreras. | Corregido en B2B | Bloque 2 |
-| **A11.09** | **Purga automática de cuarentena basada en `metadata.modified()` que elimina datos antiguos al iniciar SysPulse sin considerar fecha real de ingreso.** | **CONTENIDO TEMPORALMENTE** | **Bloque 1** |
-| **A11.10** | Manejo de errores en restauración sin distinguir bloqueo transitorio de pérdida definitiva. | Corregido en B2B | Bloque 2 |
-| **A11.11** | Orden y atomicidad entre el desplazamiento físico del archivo y la persistencia en `manifest.json`. | Corregido en B2B | Bloque 2 |
-| **A11.12** | Escritura directa no atómica de `manifest.json` susceptible de corrupción total ante apagones o caídas súbitas. | Corregido en B2A | Bloque 2 |
-| **A11.13** | Manifiesto carente de metadatos indispensables (`quarantined_at`, hash original verificado, tamaño validado, atributos). | Corregido en B2A/B2B | Bloque 2 |
-| **A11.14** | Heurística frágil de reconstrucción de rutas originales (`split("_0_")`) con riesgo de corrupción o escape de rutas. | Pendiente de corrección | Bloque 3 |
-| **A11.15** | Promesa en UI / textos de retención automática de días que no se aplica o se aplica de forma destructiva insegura. | Pendiente de corrección | Bloque 4 |
-| **A11.16** | Cobertura insuficiente de pruebas automatizadas sobre el ciclo de vida de cuarentena, manifiesto y duplicados. | En progreso (36 tests de cleaner; 81 totales) | Bloque 5 |
+| **A11.01** | Path validation | Pendiente de corrección | Bloque 3 |
+| **A11.02** | Protected directories | Pendiente de corrección | Bloque 3 |
+| **A11.03** | Symlinks/junctions/hard links | Pendiente de corrección | Bloque 3 |
+| **A11.04** | Duplicate TOCTOU | Pendiente de corrección | Bloque 3 (Obligatorio) |
+| **A11.05** | Retained copy validation | Pendiente de corrección | Bloque 3 |
+| **A11.06** | Prevent selecting all copies | Pendiente de corrección | Bloque 3 |
+| **A11.07** | Atomic manifest | Corregido en B2A | Bloque 2 |
+| **A11.08** | Restore overwrite | Corregido en B2B | Bloque 2 |
+| **A11.09** | Quarantine retention | **CONTENIDO TEMPORALMENTE** (Purga suspendida) | **Bloque 1** |
+| **A11.10** | Cross-volume restoration | **CONTENIDO TEMPORALMENTE** (Transferencia cross-volume destructiva deshabilitada) | **Bloque 2** |
+| **A11.11** | Manifest/file consistency | Corregido en B2B | Bloque 2 |
+| **A11.12** | Recycle Bin semantics | Corregido en B2B | Bloque 2 |
+| **A11.13** | User confirmations | Pendiente de corrección | Bloque 4 |
+| **A11.14** | UI error reporting | Pendiente de corrección | Bloque 4 |
+| **A11.15** | Unsafe file opening | Pendiente de corrección | Bloque 4 |
+| **A11.16** | Regression tests | En progreso (38 tests de cleaner; 83 totales) | Bloque 5 |
 
 ---
 
@@ -83,7 +83,7 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
    - **Bloque 2A (EJECUTADO):**
      - Manifiesto v2 retrocompatible con v1 (`version: 2`, `QuarantineRecordV2`).
      - Preservación estricta de históricos sin inventar fechas (`quarantined_at_utc: None`), hashes ni tamaños.
-     - Persistencia atómica con archivo temporal exclusivo, `sync_all` a disco físico y reemplazo seguro.
+     - Persistencia atómica con archivo temporal exclusivo, `sync_all` a disco físico y reemplazo seguro. Preservación del temporal ante fallo de rename.
      - Serialización de escrituras concurrentes (`Arc<Mutex<QuarantineManifestV2>>`).
      - Migración no destructiva con respaldo de seguridad `manifest.v1.bak`.
      - Recuperación conservadora ante corrupción o temporales huérfanos: bloqueo preventivo de operaciones destructivas; nunca se inicializa un manifiesto vacío ante ambigüedad.
@@ -93,38 +93,41 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
    - **Bloque 2B (EJECUTADO con revisiones R01–R05/R07 integradas):**
      - Transferencia física atómica en fases con copia exclusiva a staging, `sync_all`, verificación SHA-256 y revalidación de identidad antes de eliminar el origen (A11.07, A11.11).
      - Restauración atómica sin sobrescritura mediante destino exclusivo/no-replace, verificación SHA-256 y errores diferenciados para destino existente, origen alterado, fallo de verificación y ausencia transitoria (A11.08, A11.10).
-     - Recuperación transaccional de estados `Staged`/`Restoring` al iniciar y antes de cada operación; ante incertidumbre se conservan ambas copias.
-     - Bloqueo entre procesos (`QuarantineProcessLock`), validación de reparse points y rechazo de rutas de origen dentro de la cuarentena.
-     - Corrección y blindaje de hallazgos de revisión R01–R05 y R07; preservación estricta de semántica de Papelera en `delete_quarantine_permanently`.
-     - Blindaje contra nombres Windows/DOS equivalentes (`quarantine.lock`, short-names 8.3 `manife~*`/`quaran~*`) y rechazo fail-closed de claves duplicadas/colisionantes.
-     - Transferencias cross-volume destructivas deshabilitadas temporalmente; archivos preserved en origen/cuarentena.
-     - 26 pruebas de B2B (36 pruebas de cleaner en total; 81 totales en workspace). La purga automática sigue suspendida (A11.09).
+     - Recuperación transaccional de estados `Staged`/`Restoring` al iniciar y antes de cada operación; ante incertidumbre se conservan ambas copias. Staging preservado ante ambigüedad y legacy staging retenido fail-closed sin promover copias incompletas (R01, R03).
+     - Bloqueo entre procesos (`QuarantineProcessLock`), validación de reparse points y rechazo de rutas de origen dentro de la cuarentena. Si falla el lock, inicio inmediato en modo degradado sin leer ni escribir manifiesto (R05).
+     - Corrección y blindaje de hallazgos de revisión R01–R03, R05 y R07; preservación estricta de semántica de Papelera en `delete_quarantine_permanently` (A11.12).
+     - Blindaje contra nombres Windows/DOS equivalentes (`QUARANTINE_LOCK_FILE`, staging `.syspulse-staging`/`.syspulse-restore-*`, short-names 8.3 `manife~*`/`quaran~*`/`syspul~*`) y rechazo fail-closed de claves duplicadas/colisionantes (R07).
+     - A11.10 y R04 permanecen CONTENIDOS TEMPORALMENTE: transferencias cross-volume destructivas deshabilitadas; archivos preservados íntegramente en origen/cuarentena.
+     - 28 pruebas de B2B (38 pruebas de cleaner en total; 83 totales en workspace). La purga automática sigue suspendida (A11.09 CONTENIDO TEMPORALMENTE).
    - **Pendiente del Bloque 2:** Ninguno. A11.04 asignado obligatoriamente a Bloque 3.
    - **Bloque 2C:** No autorizado ni iniciado.
 3. **Bloque 3: Seguridad de rutas y duplicados (PENDIENTE - INCLUYE A11.04 OBLIGATORIO)**
-   - Generación de identificadores unívocos no colisionables (A11.06).
-   - Prevención de cruce de enlaces/junctions y canonicalización estricta (A11.01, A11.02).
-   - Mitigación TOCTOU en eliminación preliminar (A11.03) e integridad/TOCTOU en duplicados (A11.04 obligatorio).
-   - Blindaje de operaciones en lote ante cancelaciones (A11.05) y escape de rutas (A11.14).
+   - Path validation (A11.01).
+   - Protected directories (A11.02).
+   - Symlinks/junctions/hard links (A11.03).
+   - Duplicate TOCTOU (A11.04 - OBLIGATORIO).
+   - Retained copy validation (A11.05).
+   - Prevent selecting all copies (A11.06).
 4. **Bloque 4: Seguridad de interfaz (PENDIENTE)**
-   - Ajuste definitivo de sliders, mensajes y reactividad en Slint Neón.
-   - Internacionalización Fluent sincronizada en EN y ES-AR.
-   - Tratamiento de R06 (promesa de retención y sliders en UI).
+   - User confirmations (A11.13).
+   - UI error reporting (A11.14).
+   - Unsafe file opening (A11.15).
+   - Tratamiento de R06 (Unstable UI row indexes) y sincronización de sliders/retención en Slint UI sin falsas promesas.
 5. **Bloque 5: Validación integral (PENDIENTE)**
-   - Suite completa de pruebas de estrés, escenarios de fallo de disco y cobertura unitaria/integración.
+   - Regression tests (A11.16). Suite completa de pruebas de estrés, escenarios de fallo de disco y cobertura unitaria/integración.
 
 ---
 
 ## 5. Registro Separado de Revisiones Técnicas de Bloque 2B (R01 – R07)
 
-| ID | Área / Requisito Técnico | Estado en Bloque 2B | Resolución / Notas |
+| ID | Definición Canónica | Estado en Bloque 2B | Resolución / Notas |
 |---|---|:---:|---|
-| **R01** | Bloqueo de nombres reservados DOS y extensiones con superíndices (`COM1-9¹²³`, `LPT1-9¹²³`). | ✅ Corregido | Incorporado en `validate_windows_component` con chequeo de caracteres Unicode. |
-| **R02** | Bloqueo exclusivo entre procesos sobre directorio de cuarentena para prevenir colisiones concurrentes. | ✅ Corregido | Implementado `QuarantineProcessLock` mediante Win32 `LockFileEx` (`LOCKFILE_FAIL_IMMEDIATELY`). |
-| **R03** | Identidad unívoca de archivo vía handle Win32 y movimiento atómico `FileRenameInfo` sin reemplazo. | ✅ Corregido | Implementado `LockedFile` (`BY_HANDLE_FILE_INFORMATION`, `FileRenameInfo` con `ReplaceIfExists = FALSE`). |
-| **R04** | Preservación de Alternate Data Streams (ADS NTFS), atributos y descriptores de seguridad en transferencias cross-volume. | ✅ Corregido | Copia exhaustiva vía `FindFirstStreamW`/`FindNextStreamW`, `GetFileSecurityW`/`SetFileSecurityW` y `SetFileAttributesW`. |
-| **R05** | Transaccionalidad de staging y recuperación fail-closed ante identidades de staging no verificables. | ✅ Corregido | `QuarantineTransaction` en `QuarantineRecordV2` con rechazo conservador ante staging sin identidad registrada. |
-| **R06** | Sincronización de retención en Slint UI e i18n sin emitir falsas promesas de purga automática. | 🟡 Pendiente | Reservado para Bloque 4 (Seguridad de interfaz). Purga automática continúa suspendida. |
-| **R07** | Protección incondicional del respaldo `manifest.v1.bak` y fail-closed en errores de enumeración de directorio. | ✅ Corregido | Verificación de preexistencia de backup v1 y propagación de errores de lectura de directorio sin asumir vacío. |
+| **R01** | Destructive recovery | ✅ Corregido | Transaccionalidad Staged/Restoring, recuperación fail-closed, preservación de staging sin promover copias incompletas. |
+| **R02** | File identity/races | ✅ Corregido | Identidad unívoca vía handle Win32 (`LockedFile`), `FileRenameInfo` sin reemplazo y bloqueo `QuarantineProcessLock`. |
+| **R03** | Staging ownership | ✅ Corregido | Verificación exhaustiva de identidad y pertenencia de staging antes de cualquier operación; fail-closed ante ambigüedad. |
+| **R04** | NTFS metadata | 🟡 **CONTENIDO TEMPORALMENTE** | Preservación de ADS, atributos y descriptores de seguridad implementada; transferencias destructivas cross-volume deshabilitadas preventivamente. |
+| **R05** | Startup degradation | ✅ Corregido | Retorno inmediato en modo degradado si falla adquisición de lock; nunca se lee, migra ni escribe manifiesto sin lock. |
+| **R06** | Unstable UI row indexes | 🟡 Pendiente | Reservado para Bloque 4 (Seguridad de interfaz en Slint UI). |
+| **R07** | Manifest validation | ✅ Corregido | Validación estricta contra control/lock files (`QUARANTINE_LOCK_FILE`, staging, aliases 8.3) y rechazo fail-closed de claves duplicadas/colisionantes. |
 
-> **Nota de Seguridad sobre Eliminación:** En `delete_quarantine_permanently` se rechazó y revirtió la eliminación física irreversible introducida sin autorización, restableciendo la delegación segura a la Papelera de Reciclaje de Windows (`trash::delete`) con verificación previa de clave, registro en manifiesto y reparse points.
+> **Nota de Seguridad sobre Eliminación:** En `delete_quarantine_permanently` se rechazó y revirtió la eliminación física irreversible introducida sin autorización, restableciendo la delegación segura a la Papelera de Reciclaje de Windows (`trash::delete`) con verificación previa de clave, registro en manifiesto y reparse points (A11.12).

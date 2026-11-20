@@ -19,9 +19,9 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 | Componente | Estado | Notas Técnicas |
 |---|---|---|
-| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (81 tests unitarios pasando). |
+| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (83 tests unitarios pasando). |
 | **System Monitor** | ✅ Completado | Desacoplado asíncronamente con Tokio (60+ FPS fluidos en Slint). Emisión de telemetría a PIE (`CpuLoad`, `MemoryPressure`, `NetworkThroughput`, `ThermalAlert`). |
-| **Smart Cleaner** | 🟡 Bloques 2A/2B completados; purga suspendida | Manifiesto v2 atómico, bloqueo entre procesos (`QuarantineProcessLock`), transacciones con staging, SHA-256, no-replace, recuperación `Staged`/`Restoring`, preservación ADS/atributos NTFS, validación de rutas/reparse, backup v1 protegido y fail-closed en enumeración y claves duplicadas/colisionantes. Cross-volume destructivo deshabilitado (origen y cuarentena preservados). Semántica de Papelera en `delete_quarantine_permanently` preservada. Revisiones R01–R05/R07 integradas; R06 pendiente para Bloque 4. A11.04 asignado obligatoriamente a Bloque 3. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). 36 pruebas de cleaner/cuarentena (81 totales en workspace). |
+| **Smart Cleaner** | 🟡 Bloques 2A/2B completados; purga suspendida | Manifiesto v2 atómico, bloqueo entre procesos (`QuarantineProcessLock`), transacciones con staging, SHA-256, no-replace, recuperación `Staged`/`Restoring`, preservación ADS/atributos NTFS, validación de rutas/reparse, backup v1 protegido y fail-closed en enumeración y claves duplicadas/colisionantes. A11.10 y R04 permanecen contenidos temporalmente (cross-volume destructivo deshabilitado preventivamente; staging y origen preservados). Semántica de Papelera en `delete_quarantine_permanently` preservada. Revisiones R01–R03, R05 y R07 integradas; R06 pendiente para Bloque 4. A11.04 asignado obligatoriamente a Bloque 3. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). 38 pruebas de cleaner/cuarentena (83 totales en workspace). |
 | **CPU Focus** | ✅ Completado | Prioridad `ABOVE_NORMAL_PRIORITY_CLASS` (Win32) y memoria en MB reales. |
 | **Process Hunter** | ✅ Completado | Registro forense continuo en SQLite (`syspulse.db`), cálculo de tiempo de vida en procesos transitorios (< 5s), purga horaria y exportación a JSON/CSV. Emisión de eventos a PIE (`ProcessSpawned`, `UntrustedExecutionLocation`, `TransientProcessDetected`). |
 | **System Tray & Ajustes** | ✅ Completado | Minimizar a bandeja, autoarranque en Registro (`HKCU\...\Run`), detección robusta de `icon.ico`. Retención de métricas de red configurable (`net_metrics_retention_days`). |
@@ -70,7 +70,7 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 ## 4. Resultados de Validación Técnica
 
 - **`cargo check`:** ✅ 0 errores, 0 advertencias en todo el workspace.
-- **`cargo test`:** ✅ 81 pruebas unitarias pasando (0 fallos, 0 ignoradas) en Windows `x86_64-pc-windows-msvc`.
+- **`cargo test`:** ✅ 83 pruebas unitarias pasando (0 fallos, 0 ignoradas) en Windows `x86_64-pc-windows-msvc`.
 - **`cargo clippy --all-targets`:** ✅ 0 errores; 12 advertencias únicas preexistentes (4 de cleaner, 1 de process_hunter, 3 de tray, 4 de main), sin advertencias nuevas introducidas por B2 ni revisiones R01–R07.
 - **`git diff --check`:** ✅ 0 errores de whitespace.
 
@@ -148,7 +148,7 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
   - Diferenciación estricta entre fallo de restauración funcional y pérdida irreversible en A11.10.
   - Verificación de cobertura real en A11.16.
 - **Estado de A11.09:** **CONTENIDO TEMPORALMENTE** (Bloque 1 completado exitosamente: purga automática desactivada, preservación íntegra de archivos y manifiestos, trazabilidad explícita en logging e i18n, sin fechas estimadas).
-- **Resultado de Bloques 2A/2B:** `cargo check` limpio, 81 tests pasando y sin advertencias nuevas de clippy. Cuarentena/restauración transaccional con staging, SHA-256, no-replace (`LockedFile`), recuperación tras fallos, bloqueo entre procesos (`QuarantineProcessLock`), ADS y atributos NTFS preservados, fail-closed en enumeración y backup v1 protegido (R01–R05/R07 integradas). Semántica de Papelera en `delete_quarantine_permanently` preservada. Deshabilitadas transferencias destructivas cross-volume. R06 pendiente para Bloque 4. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). A11.04 asignado obligatoriamente a Bloque 3; Bloque 2C no autorizado.
+- **Resultado de Bloques 2A/2B:** `cargo check` limpio, 83 tests pasando y sin advertencias nuevas de clippy. Cuarentena/restauración transaccional con staging, SHA-256, no-replace (`LockedFile`), recuperación tras fallos, bloqueo entre procesos (`QuarantineProcessLock`), ADS y atributos NTFS preservados, fail-closed en enumeración y backup v1 protegido (R01–R03, R05 y R07 integradas). Semántica de Papelera en `delete_quarantine_permanently` preservada. A11.10 y R04 permanecen contenidos temporalmente (deshabilitadas transferencias destructivas cross-volume; staging y origen preservados). R06 pendiente para Bloque 4. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). A11.04 asignado obligatoriamente a Bloque 3; Bloque 2C no autorizado.
 - **Secuencia de Trabajo Planificada para A11:**
   - **Bloque 1:** Contención inmediata A11.09 — ✅ COMPLETADO (CONTENIDO TEMPORALMENTE).
   - **Bloque 2:** Integridad, persistencia y restauración de cuarentena — ✅ 2A/2B COMPLETADOS (R01–R05/R07 integradas); A11.04 reasignado obligatoriamente a Bloque 3.

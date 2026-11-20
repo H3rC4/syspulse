@@ -239,13 +239,25 @@ impl QuarantineRecordV2 {
         }
 
         let normalized = key.trim_end_matches([' ', '.']).to_ascii_lowercase();
+        let lock_file_lower = QUARANTINE_LOCK_FILE.to_ascii_lowercase();
+        let staging_suffix_lower = QUARANTINE_STAGING_SUFFIX.to_ascii_lowercase();
+        let restore_prefix_lower = RESTORE_STAGING_PREFIX.to_ascii_lowercase();
+
         if normalized == "manifest.json"
             || normalized == "manifest.v1.bak"
             || normalized == "quarantine.lock"
+            || normalized == lock_file_lower
             || normalized.starts_with("manifest.")
             || normalized.starts_with("quarantine.")
+            || normalized.starts_with(".syspulse")
+            || normalized.starts_with("syspulse")
+            || normalized.starts_with(&restore_prefix_lower)
+            || normalized.ends_with(&staging_suffix_lower)
+            || normalized.ends_with(".staging")
             || normalized.starts_with("manife~")
             || normalized.starts_with("quaran~")
+            || normalized.starts_with("syspul~")
+            || normalized.starts_with(".syspu~")
         {
             anyhow::bail!("Quarantine manifest key {:?} collides with manifest control files", key);
         }
@@ -540,7 +552,8 @@ impl QuarantineManifestV2 {
         }
 
         if let Err(e) = std::fs::rename(&temp_path, path) {
-            let _ = std::fs::remove_file(&temp_path);
+            // Preserve temporary manifest on rename failure to avoid wiping serialized data;
+            // orphan temp recovery detects and handles this safely.
             return Err(e).with_context(|| format!("Failed atomic replacement from {:?} to {:?}", temp_path, path));
         }
 
@@ -1322,6 +1335,7 @@ fn delete_owned_staging(
     file.delete()
 }
 
+#[allow(dead_code)]
 fn verify_staging_at(
     staging: &Path,
     transaction: &QuarantineTransaction,
@@ -1402,15 +1416,10 @@ fn recover_staged_quarantine(
     }
 
     if staging_exists {
-        let mut staging_file = verify_staging_at(
-            &staging,
-            &record.transaction,
-            expected_hash,
-            expected_size,
-        )?;
-        staging_file.move_no_replace(&destination)?;
-        verify_destination_at(&destination, &record.transaction, expected_hash, expected_size)?;
-        return Ok(RecoveryAction::MarkQuarantined);
+        anyhow::bail!(
+            "Legacy cross-volume staging copy exists at {:?}; preserving staging and failing closed without promoting potentially incomplete copy",
+            staging
+        );
     }
 
     anyhow::bail!(
@@ -1468,15 +1477,10 @@ fn recover_staged_restore(
     }
 
     if staging_exists {
-        let mut staging_file = verify_staging_at(
-            &staging,
-            &record.transaction,
-            expected_hash,
-            expected_size,
-        )?;
-        staging_file.move_no_replace(destination)?;
-        verify_destination_at(destination, &record.transaction, expected_hash, expected_size)?;
-        return Ok(RecoveryAction::RemoveEntry);
+        anyhow::bail!(
+            "Legacy cross-volume staging copy exists at {:?}; preserving staging and failing closed without promoting potentially incomplete copy",
+            staging
+        );
     }
 
     anyhow::bail!(
@@ -1596,15 +1600,16 @@ impl Cleaner {
         let manifest_path = quarantine_dir.join("manifest.json");
         let lock_path = quarantine_dir.join(QUARANTINE_LOCK_FILE);
 
-        let lock_result = QuarantineProcessLock::acquire(&lock_path);
-        let mut degraded_reason = None;
-        if let Err(e) = &lock_result {
-            tracing::warn!(
-                "Failed to acquire quarantine process lock at startup: {}. Quarantine operations degraded.",
-                e
-            );
-            degraded_reason = Some(format!("Quarantine lock unavailable at startup: {}", e));
-        }
+        let _startup_lock = match QuarantineProcessLock::acquire(&lock_path) {
+            Ok(lock) => lock,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to acquire quarantine process lock at startup: {}. Quarantine operations degraded.",
+                    e
+                );
+                return Self::new_degraded(quarantine_dir, format!("Quarantine lock unavailable at startup: {}", e));
+            }
+        };
 
         let mut manifest = match QuarantineManifestV2::load_or_recover(&manifest_path) {
             Ok(manifest) => manifest,
@@ -1613,23 +1618,17 @@ impl Cleaner {
                     "Quarantine manifest could not be loaded; destructive quarantine operations are disabled: {}",
                     error
                 );
-                if degraded_reason.is_none() {
-                    degraded_reason = Some(format!("Quarantine manifest load error: {}", error));
-                }
-                QuarantineManifestV2::new()
+                return Self::new_degraded(quarantine_dir, format!("Quarantine manifest load error: {}", error));
             }
         };
 
-        if lock_result.is_ok() {
-            if let Err(error) = recover_pending_transactions(&quarantine_dir, &manifest_path, &mut manifest) {
-                tracing::warn!(
-                    "Quarantine transaction recovery failed; destructive quarantine operations remain disabled: {}",
-                    error
-                );
-                if degraded_reason.is_none() {
-                    degraded_reason = Some(format!("Quarantine recovery error: {}", error));
-                }
-            }
+        let mut degraded_reason = None;
+        if let Err(error) = recover_pending_transactions(&quarantine_dir, &manifest_path, &mut manifest) {
+            tracing::warn!(
+                "Quarantine transaction recovery failed; destructive quarantine operations remain disabled: {}",
+                error
+            );
+            degraded_reason = Some(format!("Quarantine recovery error: {}", error));
         }
 
         Ok(Self {
@@ -3125,6 +3124,10 @@ mod tests {
         assert!(cleaner.is_ok(), "Quarantine locking failure must not prevent startup");
         let cleaner = cleaner.unwrap();
         assert!(cleaner.list_quarantine().is_err(), "Quarantine operations must fail closed when degraded");
+        assert!(
+            !workspace.quarantine.join("manifest.json").exists(),
+            "Manifest must not be loaded/created when lock acquisition fails"
+        );
     }
 
     #[tokio::test]
@@ -3358,9 +3361,18 @@ mod tests {
             "quarantine.lock",
             "QUARANTINE.LOCK",
             "quarantine.lock.",
+            ".syspulse-quarantine.lock",
+            ".SYSPULSE-QUARANTINE.LOCK",
+            ".syspulse-quarantine.lock.",
+            ".syspulse-quarantine.lock ",
+            ".syspulse-staging",
+            "file.syspulse-staging",
+            ".syspulse-restore-entry",
             "manifest.tmp",
             "manife~1.jso",
             "quaran~1.loc",
+            "syspul~1.loc",
+            ".syspu~1.loc",
         ] {
             assert!(
                 QuarantineRecordV2::validate_key(name).is_err(),
@@ -3368,6 +3380,59 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_b2b_legacy_staging_fails_closed_without_promoting() {
+        fault_injection::reset();
+        let workspace = TestWorkspace::new("legacy_staging_fail_closed");
+        let source = workspace.source_file("doc.bin", b"payload");
+        let key = "1234567890abcdef_1_doc.bin";
+        let staging = quarantine_staging_path_for(&workspace.quarantine, key);
+        std::fs::write(&staging, b"staged payload").unwrap();
+
+        let manifest_path = workspace.quarantine.join("manifest.json");
+        let mut manifest = QuarantineManifestV2::new();
+        manifest.entries.insert(
+            key.to_string(),
+            QuarantineRecordV2 {
+                original_path: source.clone(),
+                quarantined_at_utc: None,
+                original_sha256: Some(compute_file_hash(&staging).await.unwrap()),
+                size_bytes: Some(14),
+                state: QuarantineState::Staged,
+                transaction: QuarantineTransaction {
+                    source_identity: None,
+                    staging_path: Some(staging.clone()),
+                    staging_identity: Some(LockedFile::open_source(&staging).unwrap().identity),
+                },
+            },
+        );
+        manifest.save_atomic(&manifest_path).unwrap();
+
+        // Delete source to simulate that only staging exists
+        std::fs::remove_file(&source).unwrap();
+
+        let recovered = Cleaner::new_with_dir(workspace.quarantine.clone()).unwrap();
+        assert!(recovered.list_quarantine().is_err(), "Recovery with legacy staging must fail closed");
+        assert!(staging.exists(), "Staging file must be preserved");
+        assert!(!workspace.quarantine.join(key).exists(), "Staging must not be promoted to quarantined");
+    }
+
+    #[test]
+    fn test_b2b_atomic_save_preserves_temp_on_rename_failure() {
+        let test_dir = TestQuarantineDir::new("save_preserve_temp");
+        let target_dir = test_dir.path.join("manifest.json");
+        // Create manifest.json as a directory so std::fs::rename fails on Windows
+        std::fs::create_dir(&target_dir).unwrap();
+
+        let manifest = QuarantineManifestV2::new();
+        let res = manifest.save_atomic(&target_dir);
+        assert!(res.is_err(), "Rename over directory must fail");
+
+        let orphan_temps = QuarantineManifestV2::find_orphan_temps(&test_dir.path).unwrap();
+        assert_eq!(orphan_temps.len(), 1, "Temporary manifest file must be preserved on rename failure");
+        assert!(orphan_temps[0].exists());
     }
 
     #[test]
