@@ -54,7 +54,7 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
 | **A11.01** | Rutas por defecto y escaneo de temporales sin validación estricta de cruce de junctions / symlinks hacia ubicaciones protegidas. | Pendiente de corrección | Bloque 3 |
 | **A11.02** | Tratamiento no diferenciado de reparse points y enlaces simbólicos en la limpieza de temporales. | Pendiente de corrección | Bloque 3 |
 | **A11.03** | Condición TOCTOU en `clean_paths` entre escaneo preliminar y la invocación de `remove_file` / `trash::delete`. | Pendiente de corrección | Bloque 3 |
-| **A11.04** | Validación insuficiente de integridad y condición TOCTOU en detección de duplicados (tamaño, modified_time y pre-hash). | Pendiente de corrección | Bloque 2 |
+| **A11.04** | Validación insuficiente de integridad y condición TOCTOU en detección de duplicados (tamaño, modified_time y pre-hash). | Pendiente de corrección | Bloque 3 (Obligatorio) |
 | **A11.05** | Gestión de cancelaciones abruptas en `quarantine_selected_duplicates` dejando lotes a medio procesar. | Mitigado en B2B (transacción atómica por archivo) | Bloque 2 |
 | **A11.06** | Generación de nombres en cuarentena basada en truncado de hash (16 chars) + PID, vulnerable a colisiones inter-sesión o reciclaje. | Pendiente de corrección | Bloque 3 |
 | **A11.07** | Movimiento cross-device vía `copy` + `remove_file` sin verificación de suma de verificación ni atomicidad. | Corregido en B2B | Bloque 2 |
@@ -66,7 +66,7 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
 | **A11.13** | Manifiesto carente de metadatos indispensables (`quarantined_at`, hash original verificado, tamaño validado, atributos). | Corregido en B2A/B2B | Bloque 2 |
 | **A11.14** | Heurística frágil de reconstrucción de rutas originales (`split("_0_")`) con riesgo de corrupción o escape de rutas. | Pendiente de corrección | Bloque 3 |
 | **A11.15** | Promesa en UI / textos de retención automática de días que no se aplica o se aplica de forma destructiva insegura. | Pendiente de corrección | Bloque 4 |
-| **A11.16** | Cobertura insuficiente de pruebas automatizadas sobre el ciclo de vida de cuarentena, manifiesto y duplicados. | En progreso (35 tests de cleaner; 80 totales) | Bloque 5 |
+| **A11.16** | Cobertura insuficiente de pruebas automatizadas sobre el ciclo de vida de cuarentena, manifiesto y duplicados. | En progreso (36 tests de cleaner; 81 totales) | Bloque 5 |
 
 ---
 
@@ -96,13 +96,16 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
      - Recuperación transaccional de estados `Staged`/`Restoring` al iniciar y antes de cada operación; ante incertidumbre se conservan ambas copias.
      - Bloqueo entre procesos (`QuarantineProcessLock`), validación de reparse points y rechazo de rutas de origen dentro de la cuarentena.
      - Corrección y blindaje de hallazgos de revisión R01–R05 y R07; preservación estricta de semántica de Papelera en `delete_quarantine_permanently`.
-     - 25 pruebas de B2B (35 pruebas de cleaner en total; 80 totales en workspace). La purga automática sigue suspendida (A11.09).
-   - **Pendiente del Bloque 2:** A11.04 (integridad/TOCTOU en detección de duplicados), no incluido en el alcance autorizado de B2B.
+     - Blindaje contra nombres Windows/DOS equivalentes (`quarantine.lock`, short-names 8.3 `manife~*`/`quaran~*`) y rechazo fail-closed de claves duplicadas/colisionantes.
+     - Transferencias cross-volume destructivas deshabilitadas temporalmente; archivos preserved en origen/cuarentena.
+     - 26 pruebas de B2B (36 pruebas de cleaner en total; 81 totales en workspace). La purga automática sigue suspendida (A11.09).
+   - **Pendiente del Bloque 2:** Ninguno. A11.04 asignado obligatoriamente a Bloque 3.
    - **Bloque 2C:** No autorizado ni iniciado.
-3. **Bloque 3: Seguridad de rutas y duplicados (PENDIENTE)**
-   - Generación de identificadores unívocos no colisionables.
-   - Prevención de cruce de enlaces/junctions y canonicalización estricta.
-   - Blindaje de operaciones en lote ante cancelaciones.
+3. **Bloque 3: Seguridad de rutas y duplicados (PENDIENTE - INCLUYE A11.04 OBLIGATORIO)**
+   - Generación de identificadores unívocos no colisionables (A11.06).
+   - Prevención de cruce de enlaces/junctions y canonicalización estricta (A11.01, A11.02).
+   - Mitigación TOCTOU en eliminación preliminar (A11.03) e integridad/TOCTOU en duplicados (A11.04 obligatorio).
+   - Blindaje de operaciones en lote ante cancelaciones (A11.05) y escape de rutas (A11.14).
 4. **Bloque 4: Seguridad de interfaz (PENDIENTE)**
    - Ajuste definitivo de sliders, mensajes y reactividad en Slint Neón.
    - Internacionalización Fluent sincronizada en EN y ES-AR.

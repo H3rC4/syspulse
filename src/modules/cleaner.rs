@@ -231,7 +231,22 @@ impl QuarantineRecordV2 {
         if key == ".." || key == "." {
             anyhow::bail!("Quarantine manifest key {:?} is an invalid relative path component", key);
         }
-        if key == "manifest.json" || key == "manifest.v1.bak" || key.starts_with("manifest.") {
+        if key.ends_with(' ') || key.ends_with('.') {
+            anyhow::bail!("Quarantine manifest key {:?} ends with a space or dot", key);
+        }
+        if key.chars().any(|c| c.is_control() || "<>:\"/\\|?*".contains(c)) {
+            anyhow::bail!("Quarantine manifest key {:?} contains illegal characters", key);
+        }
+
+        let normalized = key.trim_end_matches([' ', '.']).to_ascii_lowercase();
+        if normalized == "manifest.json"
+            || normalized == "manifest.v1.bak"
+            || normalized == "quarantine.lock"
+            || normalized.starts_with("manifest.")
+            || normalized.starts_with("quarantine.")
+            || normalized.starts_with("manife~")
+            || normalized.starts_with("quaran~")
+        {
             anyhow::bail!("Quarantine manifest key {:?} collides with manifest control files", key);
         }
         validate_windows_component(key)?;
@@ -271,13 +286,89 @@ impl QuarantineRecordV2 {
 
 #[derive(Debug, Deserialize)]
 struct QuarantineManifestV1 {
+    #[serde(deserialize_with = "deserialize_v1_entries_no_duplicates")]
     entries: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+fn deserialize_v1_entries_no_duplicates<'de, D>(
+    deserializer: D,
+) -> std::result::Result<HashMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct V1EntriesVisitor;
+    impl<'de> serde::de::Visitor<'de> for V1EntriesVisitor {
+        type Value = HashMap<String, String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a map of v1 quarantine entries without duplicate keys")
+        }
+
+        fn visit_map<M>(self, mut access: M) -> std::result::Result<Self::Value, M::Error>
+        where
+            M: serde::de::MapAccess<'de>,
+        {
+            let mut map = HashMap::new();
+            let mut seen = std::collections::HashSet::new();
+            while let Some((k, v)) = access.next_entry::<String, String>()? {
+                let lower = k.to_ascii_lowercase();
+                if !seen.insert(lower) {
+                    return Err(serde::de::Error::custom(format!(
+                        "Duplicate or Windows-colliding entry key: {:?}",
+                        k
+                    )));
+                }
+                map.insert(k, v);
+            }
+            Ok(map)
+        }
+    }
+
+    deserializer.deserialize_map(V1EntriesVisitor)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuarantineManifestV2 {
     pub version: u32,
+    #[serde(deserialize_with = "deserialize_entries_no_duplicates")]
     pub entries: HashMap<String, QuarantineRecordV2>,
+}
+
+fn deserialize_entries_no_duplicates<'de, D>(
+    deserializer: D,
+) -> std::result::Result<HashMap<String, QuarantineRecordV2>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct EntriesVisitor;
+    impl<'de> serde::de::Visitor<'de> for EntriesVisitor {
+        type Value = HashMap<String, QuarantineRecordV2>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a map of quarantine entries without duplicate keys")
+        }
+
+        fn visit_map<M>(self, mut access: M) -> std::result::Result<Self::Value, M::Error>
+        where
+            M: serde::de::MapAccess<'de>,
+        {
+            let mut map = HashMap::new();
+            let mut seen = std::collections::HashSet::new();
+            while let Some((k, v)) = access.next_entry::<String, QuarantineRecordV2>()? {
+                let lower = k.to_ascii_lowercase();
+                if !seen.insert(lower) {
+                    return Err(serde::de::Error::custom(format!(
+                        "Duplicate or Windows-colliding entry key: {:?}",
+                        k
+                    )));
+                }
+                map.insert(k, v);
+            }
+            Ok(map)
+        }
+    }
+
+    deserializer.deserialize_map(EntriesVisitor)
 }
 
 impl QuarantineManifestV2 {
@@ -319,10 +410,15 @@ impl QuarantineManifestV2 {
             );
         }
 
-        let value: serde_json::Value = serde_json::from_str(&content)
+        #[derive(Deserialize)]
+        struct ManifestVersionPeek {
+            version: Option<serde_json::Value>,
+        }
+
+        let peek: ManifestVersionPeek = serde_json::from_str(&content)
             .with_context(|| format!("Quarantine manifest at {:?} is corrupt or unparseable", path))?;
 
-        if let Some(version_value) = value.get("version") {
+        if let Some(version_value) = peek.version {
             let version = version_value.as_u64().with_context(|| {
                 format!("Quarantine manifest at {:?} has a non-numeric schema version", path)
             })?;
@@ -334,7 +430,7 @@ impl QuarantineManifestV2 {
                 );
             }
 
-            let manifest_v2: QuarantineManifestV2 = serde_json::from_value(value)
+            let manifest_v2: QuarantineManifestV2 = serde_json::from_str(&content)
                 .with_context(|| format!("Quarantine manifest v2 at {:?} is corrupt", path))?;
             for (k, v) in &manifest_v2.entries {
                 v.validate(k, parent)?;
@@ -343,7 +439,7 @@ impl QuarantineManifestV2 {
             return Ok(manifest_v2);
         }
 
-        let manifest_v1: QuarantineManifestV1 = serde_json::from_value(value)
+        let manifest_v1: QuarantineManifestV1 = serde_json::from_str(&content)
             .with_context(|| format!("Quarantine manifest at {:?} is corrupt or unparseable", path))?;
         tracing::info!("Detected v1 quarantine manifest at {:?}. Starting non-destructive migration...", path);
         let backup_path = parent.join("manifest.v1.bak");
@@ -484,11 +580,8 @@ impl QuarantineManifestV2 {
         Ok(files)
     }
 
-    fn cleanup_stale_temps_if_safe(dir: &Path) -> Result<()> {
-        for temp in Self::find_orphan_temps(dir)? {
-            std::fs::remove_file(&temp)
-                .with_context(|| format!("Failed to remove stale manifest temp {:?}", temp))?;
-        }
+    fn cleanup_stale_temps_if_safe(_dir: &Path) -> Result<()> {
+        // Unverified temporaries are never deleted automatically to prevent destroying salvageable data.
         Ok(())
     }
 }
@@ -764,6 +857,7 @@ impl LockedFile {
         Self::from_parts(file, path, identity)
     }
 
+    #[allow(dead_code)]
     fn create_staging(path: &Path) -> Result<Self> {
         ensure_not_reparse(path, "Staging file")?;
         #[cfg(windows)]
@@ -846,6 +940,7 @@ impl LockedFile {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn revalidate_source(&mut self, expected_hash: &str) -> Result<()> {
         if !self.current_identity()?.same_file(&self.identity) {
             anyhow::bail!("Source identity changed for {:?}; preserving all copies", self.path);
@@ -1116,6 +1211,7 @@ fn preserve_metadata(source: &Path, destination: &Path) -> Result<()> {
         .with_context(|| format!("Failed to preserve permissions for {:?}", destination))
 }
 
+#[allow(dead_code)]
 fn copy_to_staging(source: &mut LockedFile, staging: &mut LockedFile) -> Result<FileIdentity> {
     ensure_not_reparse(&source.path, "Copy source")?;
     ensure_not_reparse(&staging.path, "Staging destination")?;
@@ -1148,6 +1244,7 @@ fn quarantine_staging_path_for(dir: &Path, key: &str) -> PathBuf {
     dir.join(format!("{}{}", key, QUARANTINE_STAGING_SUFFIX))
 }
 
+#[allow(dead_code)]
 fn restore_staging_path_for(destination: &Path, key: &str) -> Result<PathBuf> {
     let parent = destination
         .parent()
@@ -1205,6 +1302,7 @@ fn verify_destination_at(
     file.verify_hash(expected_hash, expected_size)
 }
 
+#[allow(dead_code)]
 fn delete_owned_staging(
     staging: &Path,
     transaction: &QuarantineTransaction,
@@ -1288,15 +1386,18 @@ fn recover_staged_quarantine(
     }
 
     if source_exists {
+        if staging_exists {
+            anyhow::bail!(
+                "Ambiguous quarantine transaction for {:?}: source and staging copies both exist; preserving all copies",
+                key
+            );
+        }
         let source_identity = record
             .transaction
             .source_identity
             .as_ref()
             .context("Staged quarantine source has no recorded identity")?;
         verify_source_at(source, source_identity, expected_hash, expected_size)?;
-        if staging_exists {
-            delete_owned_staging(&staging, &record.transaction, None)?;
-        }
         return Ok(RecoveryAction::RemoveEntry);
     }
 
@@ -1351,15 +1452,18 @@ fn recover_staged_restore(
     }
 
     if source_exists {
+        if staging_exists {
+            anyhow::bail!(
+                "Ambiguous restore transaction for {:?}: source and staging copies both exist; preserving all copies",
+                key
+            );
+        }
         let source_identity = record
             .transaction
             .source_identity
             .as_ref()
             .context("Restoring source has no recorded identity")?;
         verify_source_at(&source, source_identity, expected_hash, expected_size)?;
-        if staging_exists {
-            delete_owned_staging(&staging, &record.transaction, None)?;
-        }
         return Ok(RecoveryAction::RollbackRestore);
     }
 
@@ -1453,37 +1557,79 @@ pub struct Cleaner {
     manifest_path: PathBuf,
     lock_path: PathBuf,
     manifest: Arc<Mutex<QuarantineManifestV2>>,
+    quarantine_degraded_reason: Arc<Mutex<Option<String>>>,
 }
 
 impl Cleaner {
     pub fn new() -> Result<Self> {
-        let quarantine_dir = crate::modules::config::Settings::quarantine_dir()?;
+        let quarantine_dir = match crate::modules::config::Settings::quarantine_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get quarantine directory from settings: {}. Startup will continue in degraded quarantine mode.",
+                    e
+                );
+                return Self::new_degraded(PathBuf::from("quarantine"), format!("Settings error: {}", e));
+            }
+        };
         Self::new_with_dir(quarantine_dir)
     }
 
     pub fn new_with_dir(quarantine_dir: PathBuf) -> Result<Self> {
-        std::fs::create_dir_all(&quarantine_dir)
-            .with_context(|| format!("Failed to create quarantine dir {:?}", quarantine_dir))?;
-        ensure_not_reparse(&quarantine_dir, "Quarantine directory")?;
+        if let Err(e) = std::fs::create_dir_all(&quarantine_dir) {
+            tracing::warn!(
+                "Failed to create quarantine dir {:?}: {}. Startup will continue in degraded quarantine mode.",
+                quarantine_dir,
+                e
+            );
+            return Self::new_degraded(quarantine_dir, format!("Failed to create quarantine directory: {}", e));
+        }
+        if let Err(e) = ensure_not_reparse(&quarantine_dir, "Quarantine directory") {
+            tracing::warn!(
+                "Quarantine directory {:?} is reparse/symlink: {}. Startup will continue in degraded quarantine mode.",
+                quarantine_dir,
+                e
+            );
+            return Self::new_degraded(quarantine_dir, format!("Quarantine directory is reparse point: {}", e));
+        }
 
         let manifest_path = quarantine_dir.join("manifest.json");
         let lock_path = quarantine_dir.join(QUARANTINE_LOCK_FILE);
-        let _lock = QuarantineProcessLock::acquire(&lock_path)?;
+
+        let lock_result = QuarantineProcessLock::acquire(&lock_path);
+        let mut degraded_reason = None;
+        if let Err(e) = &lock_result {
+            tracing::warn!(
+                "Failed to acquire quarantine process lock at startup: {}. Quarantine operations degraded.",
+                e
+            );
+            degraded_reason = Some(format!("Quarantine lock unavailable at startup: {}", e));
+        }
+
         let mut manifest = match QuarantineManifestV2::load_or_recover(&manifest_path) {
             Ok(manifest) => manifest,
             Err(error) => {
-                tracing::error!(
+                tracing::warn!(
                     "Quarantine manifest could not be loaded; destructive quarantine operations are disabled: {}",
                     error
                 );
+                if degraded_reason.is_none() {
+                    degraded_reason = Some(format!("Quarantine manifest load error: {}", error));
+                }
                 QuarantineManifestV2::new()
             }
         };
-        if let Err(error) = recover_pending_transactions(&quarantine_dir, &manifest_path, &mut manifest) {
-            tracing::error!(
-                "Quarantine transaction recovery failed; destructive quarantine operations remain disabled: {}",
-                error
-            );
+
+        if lock_result.is_ok() {
+            if let Err(error) = recover_pending_transactions(&quarantine_dir, &manifest_path, &mut manifest) {
+                tracing::warn!(
+                    "Quarantine transaction recovery failed; destructive quarantine operations remain disabled: {}",
+                    error
+                );
+                if degraded_reason.is_none() {
+                    degraded_reason = Some(format!("Quarantine recovery error: {}", error));
+                }
+            }
         }
 
         Ok(Self {
@@ -1491,10 +1637,26 @@ impl Cleaner {
             manifest_path,
             lock_path,
             manifest: Arc::new(Mutex::new(manifest)),
+            quarantine_degraded_reason: Arc::new(Mutex::new(degraded_reason)),
+        })
+    }
+
+    fn new_degraded(quarantine_dir: PathBuf, reason: String) -> Result<Self> {
+        let manifest_path = quarantine_dir.join("manifest.json");
+        let lock_path = quarantine_dir.join(QUARANTINE_LOCK_FILE);
+        Ok(Self {
+            quarantine_dir,
+            manifest_path,
+            lock_path,
+            manifest: Arc::new(Mutex::new(QuarantineManifestV2::new())),
+            quarantine_degraded_reason: Arc::new(Mutex::new(Some(reason))),
         })
     }
 
     fn prepare_locked(&self) -> Result<(QuarantineProcessLock, MutexGuard<'_, QuarantineManifestV2>)> {
+        if let Some(reason) = self.quarantine_degraded_reason.lock().unwrap().as_ref() {
+            anyhow::bail!("Quarantine is degraded/disabled: {}", reason);
+        }
         let lock = QuarantineProcessLock::acquire(&self.lock_path)?;
         let mut guard = self.manifest.lock().unwrap();
         let mut manifest = QuarantineManifestV2::load_or_recover(&self.manifest_path)?;
@@ -2139,55 +2301,15 @@ impl Cleaner {
         }
 
         if cross_volume {
-            let mut staging_file = match LockedFile::create_staging(&staging) {
-                Ok(file) => file,
-                Err(error) => {
-                    let mut rollback = guard.clone();
-                    if let Some(record) = rollback.entries.get_mut(&key) {
-                        record.state = QuarantineState::Quarantined;
-                    }
-                    self.persist_manifest(&mut guard, rollback)?;
-                    return Err(error);
-                }
-            };
-
-            let mut staged = guard.clone();
-            if let Some(record) = staged.entries.get_mut(&key) {
-                record.transaction.staging_path = Some(staging.clone());
-                record.transaction.staging_identity = Some(staging_file.identity.clone());
+            let mut rollback = guard.clone();
+            if let Some(record) = rollback.entries.get_mut(&key) {
+                record.state = QuarantineState::Quarantined;
             }
-            if let Err(error) = self.persist_manifest(&mut guard, staged) {
-                let _ = staging_file.delete();
-                return Err(error);
-            }
-
-            if let Err(error) = copy_to_staging(&mut source_file, &mut staging_file) {
-                let _ = staging_file.delete();
-                let mut rollback = guard.clone();
-                if let Some(record) = rollback.entries.get_mut(&key) {
-                    record.state = QuarantineState::Quarantined;
-                }
-                let _ = self.persist_manifest(&mut guard, rollback);
-                return Err(error);
-            }
-            fault_injection::check("restore_after_stage_copy")?;
-            staging_file.verify_hash(&hash, size)?;
-            fault_injection::check("restore_after_stage_verify")?;
-            if let Err(error) = staging_file.move_no_replace(&destination) {
-                let _ = staging_file.delete();
-                let mut rollback = guard.clone();
-                if let Some(record) = rollback.entries.get_mut(&key) {
-                    record.state = QuarantineState::Quarantined;
-                }
-                self.persist_manifest(&mut guard, rollback)?;
-                return Err(error);
-            }
-            fault_injection::check("restore_after_final_move")?;
-            staging_file.verify_hash(&hash, size)?;
-            fault_injection::check("restore_before_source_delete")?;
-            source_file.revalidate_source(&hash)?;
-            source_file.delete()?;
-            fault_injection::check("restore_after_source_delete")?;
+            self.persist_manifest(&mut guard, rollback)?;
+            anyhow::bail!(
+                "Destructive cross-volume restore transfer is temporarily disabled (A11.10 open); quarantined file preserved at {:?}",
+                source
+            );
         }
 
         fault_injection::check("restore_before_commit")?;
@@ -2274,7 +2396,8 @@ impl Cleaner {
         let destination = self.quarantine_dir.join(&key);
         let staging = self.quarantine_staging_path(&key);
 
-        if guard.entries.contains_key(&key)
+        let key_lower = key.to_ascii_lowercase();
+        if guard.entries.keys().any(|k| k.to_ascii_lowercase() == key_lower)
             || path_present(&destination)?
             || path_present(&staging)?
         {
@@ -2321,49 +2444,13 @@ impl Cleaner {
         }
 
         if cross_volume {
-            let mut staging_file = match LockedFile::create_staging(&staging) {
-                Ok(file) => file,
-                Err(error) => {
-                    let mut rollback = guard.clone();
-                    rollback.entries.remove(&key);
-                    self.persist_manifest(&mut guard, rollback)?;
-                    return Err(error);
-                }
-            };
-
-            let mut staged = guard.clone();
-            if let Some(record) = staged.entries.get_mut(&key) {
-                record.transaction.staging_path = Some(staging.clone());
-                record.transaction.staging_identity = Some(staging_file.identity.clone());
-            }
-            if let Err(error) = self.persist_manifest(&mut guard, staged) {
-                let _ = staging_file.delete();
-                return Err(error);
-            }
-
-            if let Err(error) = copy_to_staging(&mut source_file, &mut staging_file) {
-                let _ = staging_file.delete();
-                let mut rollback = guard.clone();
-                rollback.entries.remove(&key);
-                let _ = self.persist_manifest(&mut guard, rollback);
-                return Err(error);
-            }
-            fault_injection::check("quarantine_after_stage_copy")?;
-            staging_file.verify_hash(&hash, size)?;
-            fault_injection::check("quarantine_after_stage_verify")?;
-            if let Err(error) = staging_file.move_no_replace(&destination) {
-                let _ = staging_file.delete();
-                let mut rollback = guard.clone();
-                rollback.entries.remove(&key);
-                self.persist_manifest(&mut guard, rollback)?;
-                return Err(error);
-            }
-            fault_injection::check("quarantine_after_final_move")?;
-            staging_file.verify_hash(&hash, size)?;
-            fault_injection::check("quarantine_before_source_delete")?;
-            source_file.revalidate_source(&hash)?;
-            source_file.delete()?;
-            fault_injection::check("quarantine_after_source_delete")?;
+            let mut rollback = guard.clone();
+            rollback.entries.remove(&key);
+            self.persist_manifest(&mut guard, rollback)?;
+            anyhow::bail!(
+                "Destructive cross-volume quarantine transfer is temporarily disabled (A11.10 open); source file preserved at {:?}",
+                source
+            );
         }
 
         fault_injection::check("quarantine_before_commit")?;
@@ -2979,69 +3066,65 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_b2b_quarantine_cross_volume_stage_copy_failure_rolls_back() {
+    async fn test_b2b_quarantine_cross_volume_disabled_preserves_files() {
         fault_injection::reset();
         fault_injection::set_force_cross_volume(true);
-        let workspace = TestWorkspace::new("quarantine_stage_copy");
+        let workspace = TestWorkspace::new("quarantine_cross_volume_disabled");
         let source = workspace.source_file("doc.bin", b"payload");
         let cleaner = workspace.cleaner();
 
-        fault_injection::set_point("quarantine_after_stage_copy");
-        assert!(cleaner.quarantine_file(&source).await.is_err());
-        assert!(source.exists());
-        assert!(std::fs::read_dir(&workspace.quarantine).unwrap().flatten().any(|entry| {
-            entry.file_name().to_string_lossy().ends_with(QUARANTINE_STAGING_SUFFIX)
-        }));
-
-        let recovered = workspace.cleaner();
-        assert!(recovered.list_quarantine().unwrap().is_empty());
-        assert!(source.exists());
-        assert!(!std::fs::read_dir(&workspace.quarantine).unwrap().flatten().any(|entry| {
-            entry.file_name().to_string_lossy().ends_with(QUARANTINE_STAGING_SUFFIX)
-        }));
-    }
-
-    #[tokio::test]
-    async fn test_b2b_quarantine_cross_volume_before_source_delete_preserves_both_copies() {
-        fault_injection::reset();
-        fault_injection::set_force_cross_volume(true);
-        let workspace = TestWorkspace::new("quarantine_before_delete");
-        let source = workspace.source_file("doc.bin", b"payload");
-        let cleaner = workspace.cleaner();
-
-        fault_injection::set_point("quarantine_before_source_delete");
-        assert!(cleaner.quarantine_file(&source).await.is_err());
-        assert!(source.exists());
-        assert_eq!(payload_files(&workspace).len(), 1);
-
-        let recovered = Cleaner::new_with_dir(workspace.quarantine.clone())
-            .expect("Cleaner startup must remain available");
-        assert!(recovered.list_quarantine().is_err(), "Ambiguous recovery must fail closed");
-        assert!(source.exists());
+        let res = cleaner.quarantine_file(&source).await;
+        assert!(res.is_err(), "Cross-volume quarantine must be rejected");
+        assert!(source.exists(), "Source file must be preserved");
         assert_eq!(std::fs::read(&source).unwrap(), b"payload");
-        let copies = payload_files(&workspace);
-        assert_eq!(copies.len(), 1);
-        assert_eq!(std::fs::read(&copies[0]).unwrap(), b"payload");
+        assert!(cleaner.manifest.lock().unwrap().entries.is_empty(), "Manifest must remain clean");
     }
 
     #[tokio::test]
-    async fn test_b2b_quarantine_uncertain_source_change_preserves_both_copies() {
+    async fn test_b2b_ambiguous_recovery_preserves_staging_files() {
         fault_injection::reset();
-        fault_injection::set_force_cross_volume(true);
-        let workspace = TestWorkspace::new("quarantine_uncertain");
+        let workspace = TestWorkspace::new("ambiguous_staging");
         let source = workspace.source_file("doc.bin", b"payload");
-        let cleaner = workspace.cleaner();
+        let manifest_path = workspace.quarantine.join("manifest.json");
 
-        fault_injection::set_point("quarantine_before_source_delete");
-        assert!(cleaner.quarantine_file(&source).await.is_err());
-        std::fs::write(&source, b"changed after staging").unwrap();
+        let key = "1234567890abcdef_1_doc.bin";
+        let staging_path = quarantine_staging_path_for(&workspace.quarantine, key);
+        std::fs::write(&staging_path, b"staged payload").unwrap();
 
-        let recovered = Cleaner::new_with_dir(workspace.quarantine.clone())
-            .expect("Cleaner startup must remain available");
-        assert!(recovered.list_quarantine().is_err(), "Destructive operations must fail closed");
-        assert!(source.exists());
-        assert_eq!(std::fs::read(&source).unwrap(), b"changed after staging");
-        assert_eq!(payload_files(&workspace).len(), 1);
+        let mut manifest = QuarantineManifestV2::new();
+        manifest.entries.insert(
+            key.to_string(),
+            QuarantineRecordV2 {
+                original_path: source.clone(),
+                quarantined_at_utc: None,
+                original_sha256: Some(compute_file_hash(&source).await.unwrap()),
+                size_bytes: Some(7),
+                state: QuarantineState::Staged,
+                transaction: QuarantineTransaction {
+                    source_identity: Some(LockedFile::open_source(&source).unwrap().identity),
+                    staging_path: Some(staging_path.clone()),
+                    staging_identity: Some(LockedFile::open_source(&staging_path).unwrap().identity),
+                },
+            },
+        );
+        manifest.save_atomic(&manifest_path).unwrap();
+
+        let recovered = Cleaner::new_with_dir(workspace.quarantine.clone()).unwrap();
+        assert!(recovered.list_quarantine().is_err(), "Ambiguous recovery must fail closed");
+        assert!(source.exists(), "Source must be preserved");
+        assert!(staging_path.exists(), "Staging file must never be deleted in ambiguous recovery");
+    }
+
+    #[test]
+    fn test_b2b_startup_lock_or_init_failure_does_not_crash() {
+        let workspace = TestWorkspace::new("startup_degraded");
+        let lock_path = workspace.quarantine.join(QUARANTINE_LOCK_FILE);
+        let _held_lock = QuarantineProcessLock::acquire(&lock_path).unwrap();
+
+        let cleaner = Cleaner::new_with_dir(workspace.quarantine.clone());
+        assert!(cleaner.is_ok(), "Quarantine locking failure must not prevent startup");
+        let cleaner = cleaner.unwrap();
+        assert!(cleaner.list_quarantine().is_err(), "Quarantine operations must fail closed when degraded");
     }
 
     #[tokio::test]
@@ -3115,48 +3198,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_b2b_restore_cross_volume_stage_copy_failure_rolls_back() {
+    async fn test_b2b_restore_cross_volume_disabled_preserves_files() {
         fault_injection::reset();
-        fault_injection::set_force_cross_volume(true);
-        let workspace = TestWorkspace::new("restore_stage_copy");
+        let workspace = TestWorkspace::new("restore_cross_volume_disabled");
         let source = workspace.source_file("doc.bin", b"payload");
         let cleaner = workspace.cleaner();
         cleaner.quarantine_file(&source).await.unwrap();
         let entry = entry_for(&workspace, &source);
 
-        fault_injection::set_point("restore_after_stage_copy");
-        assert!(cleaner.restore_from_quarantine(&entry).is_err());
-        assert!(!source.exists());
-        assert!(entry.quarantine_path.exists());
-        assert!(workspace.source.read_dir().unwrap().flatten().any(|item| {
-            item.file_name().to_string_lossy().starts_with(RESTORE_STAGING_PREFIX)
-        }));
+        fault_injection::set_force_cross_volume(true);
+        let res = cleaner.restore_from_quarantine(&entry);
+        assert!(res.is_err(), "Cross-volume restore must be rejected");
+        assert!(!source.exists(), "Destination must not be overwritten or created");
+        assert!(entry.quarantine_path.exists(), "Quarantined copy must remain intact");
 
         let recovered = workspace.cleaner();
-        assert_eq!(recovered.list_quarantine().unwrap().len(), 1);
-        assert!(entry.quarantine_path.exists());
-    }
-
-    #[tokio::test]
-    async fn test_b2b_restore_cross_volume_before_source_delete_preserves_both_copies() {
-        fault_injection::reset();
-        fault_injection::set_force_cross_volume(true);
-        let workspace = TestWorkspace::new("restore_before_delete");
-        let source = workspace.source_file("doc.bin", b"payload");
-        let cleaner = workspace.cleaner();
-        cleaner.quarantine_file(&source).await.unwrap();
-        let entry = entry_for(&workspace, &source);
-
-        fault_injection::set_point("restore_before_source_delete");
-        assert!(cleaner.restore_from_quarantine(&entry).is_err());
-        assert!(source.exists());
-        assert!(entry.quarantine_path.exists());
-
-        let recovered = Cleaner::new_with_dir(workspace.quarantine.clone())
-            .expect("Cleaner startup must remain available");
-        assert!(recovered.list_quarantine().is_err(), "Ambiguous recovery must fail closed");
-        assert_eq!(std::fs::read(&source).unwrap(), b"payload");
-        assert!(entry.quarantine_path.exists());
+        assert_eq!(recovered.list_quarantine().unwrap().len(), 1, "Quarantine record must remain intact");
     }
 
     #[tokio::test]
@@ -3197,31 +3254,36 @@ mod tests {
     #[tokio::test]
     async fn test_b2b_recovery_preserves_staging_without_recorded_identity() {
         fault_injection::reset();
-        fault_injection::set_force_cross_volume(true);
         let workspace = TestWorkspace::new("unowned_staging");
         let source = workspace.source_file("doc.bin", b"payload");
-        let cleaner = workspace.cleaner();
-
-        fault_injection::set_point("quarantine_after_stage_copy");
-        assert!(cleaner.quarantine_file(&source).await.is_err());
-        assert!(source.exists());
+        let key = "1234567890abcdef_1_doc.bin";
+        let staging = quarantine_staging_path_for(&workspace.quarantine, key);
+        std::fs::write(&staging, b"payload").unwrap();
 
         let manifest_path = workspace.quarantine.join("manifest.json");
-        let mut manifest = QuarantineManifestV2::load_or_recover(&manifest_path).unwrap();
-        let key = manifest.entries.keys().next().unwrap().clone();
-        manifest
-            .entries
-            .get_mut(&key)
-            .unwrap()
-            .transaction
-            .staging_identity = None;
+        let mut manifest = QuarantineManifestV2::new();
+        manifest.entries.insert(
+            key.to_string(),
+            QuarantineRecordV2 {
+                original_path: source.clone(),
+                quarantined_at_utc: None,
+                original_sha256: Some(compute_file_hash(&source).await.unwrap()),
+                size_bytes: Some(7),
+                state: QuarantineState::Staged,
+                transaction: QuarantineTransaction {
+                    source_identity: None,
+                    staging_path: Some(staging.clone()),
+                    staging_identity: None,
+                },
+            },
+        );
         manifest.save_atomic(&manifest_path).unwrap();
 
         let recovered = Cleaner::new_with_dir(workspace.quarantine.clone())
             .expect("Cleaner startup must remain available");
         assert!(recovered.list_quarantine().is_err(), "Unowned staging must fail closed");
         assert!(source.exists());
-        assert!(quarantine_staging_path_for(&workspace.quarantine, &key).exists());
+        assert!(staging.exists());
     }
 
     #[test]
@@ -3255,18 +3317,16 @@ mod tests {
     }
 
     #[cfg(windows)]
-    #[tokio::test]
-    async fn test_b2b_cross_volume_preserves_ntfs_streams_and_attributes() {
+    #[test]
+    fn test_b2b_cross_volume_preserves_ntfs_streams_and_attributes() {
         use std::os::windows::fs::MetadataExt;
         use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN};
 
-        fault_injection::reset();
-        fault_injection::set_force_cross_volume(true);
         let workspace = TestWorkspace::new("ntfs_metadata");
-        let source = workspace.source_file("doc.bin", b"payload");
-        let source_stream = stream_path(&source, ":syspulse_test");
+        let source_path = workspace.source_file("doc.bin", b"payload");
+        let source_stream = stream_path(&source_path, ":syspulse_test");
         std::fs::write(&source_stream, b"alternate data").unwrap();
-        let source_wide = wide_path(&source);
+        let source_wide = wide_path(&source_path);
         unsafe {
             SetFileAttributesW(
                 PCWSTR(source_wide.as_ptr()),
@@ -3275,15 +3335,77 @@ mod tests {
             .unwrap();
         }
 
-        let cleaner = workspace.cleaner();
-        cleaner.quarantine_file(&source).await.unwrap();
-        assert!(!source.exists());
+        let staging_path = workspace.source.join("staging.tmp");
+        let mut source_file = LockedFile::open_source(&source_path).unwrap();
+        let mut staging_file = LockedFile::create_staging(&staging_path).unwrap();
 
-        let destination = payload_files(&workspace).into_iter().next().unwrap();
-        let destination_stream = stream_path(&destination, ":syspulse_test");
-        assert_eq!(std::fs::read(destination_stream).unwrap(), b"alternate data");
-        let attributes = std::fs::metadata(&destination).unwrap().file_attributes();
+        copy_to_staging(&mut source_file, &mut staging_file).unwrap();
+
+        let staging_stream = stream_path(&staging_path, ":syspulse_test");
+        assert_eq!(std::fs::read(staging_stream).unwrap(), b"alternate data");
+        let attributes = std::fs::metadata(&staging_path).unwrap().file_attributes();
         assert_eq!(attributes & FILE_ATTRIBUTE_HIDDEN.0, FILE_ATTRIBUTE_HIDDEN.0);
+    }
+
+    #[test]
+    fn test_b2b_rejects_windows_equivalent_manifest_control_names() {
+        for name in [
+            "MANIFEST.JSON",
+            "manifest.json.",
+            "manifest.json ",
+            "MANIFEST.V1.BAK",
+            "manifest.v1.bak.",
+            "quarantine.lock",
+            "QUARANTINE.LOCK",
+            "quarantine.lock.",
+            "manifest.tmp",
+            "manife~1.jso",
+            "quaran~1.loc",
+        ] {
+            assert!(
+                QuarantineRecordV2::validate_key(name).is_err(),
+                "{:?} must be rejected as Windows-equivalent manifest/control file",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_b2b_manifest_rejects_duplicate_keys() {
+        let test_dir = TestQuarantineDir::new("duplicate_keys");
+        let manifest_file = test_dir.path.join("manifest.json");
+
+        let duplicate_json = r#"{
+            "version": 2,
+            "entries": {
+                "hash_1_doc.bin": {
+                    "original_path": "C:\\doc1.bin",
+                    "state": "Quarantined"
+                },
+                "hash_1_doc.bin": {
+                    "original_path": "C:\\doc2.bin",
+                    "state": "Quarantined"
+                }
+            }
+        }"#;
+        std::fs::write(&manifest_file, duplicate_json).unwrap();
+        assert!(QuarantineManifestV2::load_or_recover(&manifest_file).is_err(), "Duplicate keys must fail closed");
+
+        let case_colliding_json = r#"{
+            "version": 2,
+            "entries": {
+                "hash_1_doc.bin": {
+                    "original_path": "C:\\doc1.bin",
+                    "state": "Quarantined"
+                },
+                "HASH_1_DOC.BIN": {
+                    "original_path": "C:\\doc2.bin",
+                    "state": "Quarantined"
+                }
+            }
+        }"#;
+        std::fs::write(&manifest_file, case_colliding_json).unwrap();
+        assert!(QuarantineManifestV2::load_or_recover(&manifest_file).is_err(), "Case-colliding keys must fail closed");
     }
 
     #[test]
