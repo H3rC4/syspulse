@@ -214,6 +214,136 @@ fn ensure_not_reparse(path: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
+fn ensure_not_hard_link(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let wide = wide_path(path);
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+                HANDLE::default(),
+            )
+        };
+        if let Ok(handle) = handle {
+            let mut info = BY_HANDLE_FILE_INFORMATION::default();
+            let res = unsafe { GetFileInformationByHandle(handle, &mut info) };
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
+            if res.is_ok() && info.nNumberOfLinks > 1 {
+                anyhow::bail!(
+                    "File {:?} has {} hard links; rejecting destructive operation on multi-linked file",
+                    path,
+                    info.nNumberOfLinks
+                );
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = std::fs::symlink_metadata(path) {
+            if meta.is_file() && meta.nlink() > 1 {
+                anyhow::bail!(
+                    "File {:?} has {} hard links; rejecting destructive operation on multi-linked file",
+                    path,
+                    meta.nlink()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn is_protected_path(path: &Path, quarantine_dir: Option<&Path>) -> bool {
+    let path = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => path.to_path_buf(),
+    };
+
+    if let Some(qdir) = quarantine_dir {
+        let q_canon = qdir.canonicalize().unwrap_or_else(|_| qdir.to_path_buf());
+        if path.starts_with(&q_canon) {
+            return true;
+        }
+    }
+
+    if path.parent().is_none() || path.components().count() <= 1 {
+        return true;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::env;
+        if let Some(windir) = env::var_os("SystemRoot").or_else(|| env::var_os("windir")) {
+            let win_path = PathBuf::from(windir);
+            let win_canon = win_path.canonicalize().unwrap_or(win_path);
+            if path.starts_with(&win_canon) {
+                return true;
+            }
+        }
+
+        for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData"] {
+            if let Some(val) = env::var_os(var) {
+                let p = PathBuf::from(val);
+                let p_canon = p.canonicalize().unwrap_or(p);
+                if path.starts_with(&p_canon) {
+                    return true;
+                }
+            }
+        }
+
+        if let Ok(exe) = env::current_exe() {
+            if path == exe {
+                return true;
+            }
+            if let Some(exe_dir) = exe.parent() {
+                if path == exe_dir.join("syspulse.db") || path == exe_dir.join("settings.toml") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        for protected in ["/bin", "/sbin", "/usr", "/etc", "/dev", "/proc", "/sys", "/boot", "/lib", "/lib64"] {
+            if path.starts_with(protected) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn validate_ancestors_safety(
+    path: &Path,
+    allowed_root: Option<&Path>,
+    quarantine_dir: Option<&Path>,
+) -> Result<()> {
+    let mut curr = path.parent();
+    while let Some(parent) = curr {
+        if parent.parent().is_none() || parent.components().count() <= 1 {
+            break;
+        }
+        ensure_not_reparse(parent, "Ancestor path")?;
+        if is_protected_path(parent, quarantine_dir) {
+            anyhow::bail!("Ancestor path {:?} is a protected directory", parent);
+        }
+        if let Some(root) = allowed_root {
+            if parent == root {
+                break;
+            }
+        }
+        curr = parent.parent();
+    }
+    Ok(())
+}
+
 impl QuarantineRecordV2 {
     pub fn validate(&self, key: &str, quarantine_dir: &Path) -> Result<()> {
         Self::validate_key(key)?;
@@ -285,6 +415,12 @@ impl QuarantineRecordV2 {
         validate_windows_component(&file_name)?;
         ensure_not_reparse(original_path, "Original path")?;
         ensure_not_reparse(quarantine_dir, "Quarantine directory")?;
+        ensure_not_hard_link(original_path)?;
+        if is_protected_path(original_path, Some(quarantine_dir)) {
+            anyhow::bail!("Original path {:?} is located in a protected directory", original_path);
+        }
+        validate_ancestors_safety(original_path, None, Some(quarantine_dir))?;
+
         if let (Ok(orig_canon), Ok(quar_canon)) = (original_path.canonicalize(), quarantine_dir.canonicalize()) {
             if orig_canon.starts_with(&quar_canon) {
                 anyhow::bail!("Original path {:?} points inside quarantine directory {:?}", original_path, quarantine_dir);
@@ -742,6 +878,8 @@ pub struct FileIdentity {
     pub last_write_time: u64,
     #[serde(default)]
     pub attributes: u32,
+    #[serde(default)]
+    pub number_of_links: u32,
 }
 
 impl FileIdentity {
@@ -751,6 +889,10 @@ impl FileIdentity {
 
     fn same_file(&self, other: &Self) -> bool {
         self.same_object(other) && self.len == other.len
+    }
+
+    pub fn is_hard_link(&self) -> bool {
+        self.number_of_links > 1
     }
 }
 
@@ -775,6 +917,7 @@ fn identity_from_file(file: &std::fs::File) -> Result<FileIdentity> {
         last_access_time: filetime_to_u64(info.ftLastAccessTime),
         last_write_time: filetime_to_u64(info.ftLastWriteTime),
         attributes: info.dwFileAttributes,
+        number_of_links: info.nNumberOfLinks,
     })
 }
 
@@ -801,6 +944,7 @@ fn identity_from_file(file: &std::fs::File) -> Result<FileIdentity> {
         last_access_time: system_time_to_u64(metadata.accessed().ok()),
         last_write_time: system_time_to_u64(metadata.modified().ok()),
         attributes: metadata.mode(),
+        number_of_links: metadata.nlink() as u32,
     })
 }
 
@@ -850,6 +994,13 @@ impl LockedFile {
         let file = std::fs::File::open(path)
             .with_context(|| format!("Failed to open {:?}", path))?;
         let identity = identity_from_file(&file)?;
+        if identity.is_hard_link() {
+            anyhow::bail!(
+                "File {:?} has {} hard links; rejecting destructive operation on multi-linked file",
+                path,
+                identity.number_of_links
+            );
+        }
         Self::from_parts(file, path, identity)
     }
 
@@ -867,6 +1018,30 @@ impl LockedFile {
         let file = std::fs::File::open(path)
             .with_context(|| format!("Failed to open {:?}", path))?;
         let identity = identity_from_file(&file)?;
+        Self::from_parts(file, path, identity)
+    }
+
+    fn open_protected_read(path: &Path) -> Result<Self> {
+        ensure_not_reparse(path, "Retained copy")?;
+        #[cfg(windows)]
+        let file = open_windows_file(
+            path,
+            GENERIC_READ.0,
+            FILE_SHARE_READ.0,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+        )?;
+        #[cfg(not(windows))]
+        let file = std::fs::File::open(path)
+            .with_context(|| format!("Failed to open {:?}", path))?;
+        let identity = identity_from_file(&file)?;
+        if identity.is_hard_link() {
+            anyhow::bail!(
+                "Retained file {:?} has {} hard links; cannot verify independent copy",
+                path,
+                identity.number_of_links
+            );
+        }
         Self::from_parts(file, path, identity)
     }
 
@@ -1807,6 +1982,28 @@ impl Cleaner {
         self.clean_paths(paths, token, pause_flag, cancel_flag, progress_callback, permanent_delete).await
     }
 
+    pub fn validate_clean_path(&self, target: &Path, base: &Path) -> Result<()> {
+        if !target.is_absolute() {
+            anyhow::bail!("Target path {:?} is not absolute", target);
+        }
+        if !base.is_absolute() {
+            anyhow::bail!("Base path {:?} is not absolute", base);
+        }
+        if target.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::CurDir)) {
+            anyhow::bail!("Target path {:?} contains relative path components", target);
+        }
+        if !target.starts_with(base) {
+            anyhow::bail!("Target path {:?} is outside allowed root {:?}", target, base);
+        }
+        if is_protected_path(target, Some(&self.quarantine_dir)) {
+            anyhow::bail!("Target path {:?} is in a protected system or application directory", target);
+        }
+        ensure_not_reparse(target, "Clean target")?;
+        ensure_not_hard_link(target)?;
+        validate_ancestors_safety(target, Some(base), Some(&self.quarantine_dir))?;
+        Ok(())
+    }
+
     pub async fn clean_paths(
         &self,
         paths: Vec<PathBuf>,
@@ -1814,7 +2011,7 @@ impl Cleaner {
         pause_flag: Arc<AtomicBool>,
         cancel_flag: Arc<AtomicBool>,
         progress_callback: impl Fn(usize, u64) + Send + 'static,
-        permanent_delete: bool,  // NUEVO: true = eliminar directo, false = papelera
+        _permanent_delete: bool,
     ) -> Result<CleanerResult> {
         let mut result = CleanerResult::default();
         let mut moved_bytes: u64 = 0;
@@ -1840,6 +2037,12 @@ impl Cleaner {
                     continue;
                 }
 
+                if let Err(e) = self.validate_clean_path(path, &base) {
+                    tracing::warn!("Skipping unsafe path in clean_paths: {}: {}", path.display(), e);
+                    result.errors.push(format!("{}: {}", path.display(), e));
+                    continue;
+                }
+
                 if let Ok(meta) = entry.metadata() {
                     chunk.push((path.to_path_buf(), meta.len()));
 
@@ -1859,19 +2062,19 @@ impl Cleaner {
                                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                             }
 
-                            // Eliminar según configuración: directo o papelera
+                            // TOCTOU mitigation: revalidate path safety immediately before deletion
+                            if let Err(e) = self.validate_clean_path(&file_path, &base) {
+                                let error_msg = format!("{}: {}", file_path.display(), e);
+                                tracing::warn!("Failed safety validation before delete: {}", error_msg);
+                                result.errors.push(error_msg);
+                                continue;
+                            }
+
+                            // Delegar a la Papelera de Reciclaje para preservar la recuperabilidad y evitar borrado irreversible
                             let path_clone = file_path.clone();
-                            let delete_result: Result<(), String> = if permanent_delete {
-                                // Eliminación directa - sin papelera, instantáneo
-                                tokio::task::spawn_blocking(move || {
-                                    std::fs::remove_file(&path_clone).map_err(|e| e.to_string())
-                                }).await.map_err(|e| e.to_string()).and_then(|r| r)
-                            } else {
-                                // A papelera (comportamiento original)
-                                tokio::task::spawn_blocking(move || {
-                                    trash::delete(&path_clone).map_err(|e| e.to_string())
-                                }).await.map_err(|e| e.to_string()).and_then(|r| r)
-                            };
+                            let delete_result: Result<(), String> = tokio::task::spawn_blocking(move || {
+                                trash::delete(&path_clone).map_err(|e| e.to_string())
+                            }).await.map_err(|e| e.to_string()).and_then(|r| r);
 
                             match delete_result {
                                 Ok(_) => {
@@ -1909,16 +2112,17 @@ impl Cleaner {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
 
+                    if let Err(e) = self.validate_clean_path(&file_path, &base) {
+                        let error_msg = format!("{}: {}", file_path.display(), e);
+                        tracing::warn!("Failed safety validation before delete: {}", error_msg);
+                        result.errors.push(error_msg);
+                        continue;
+                    }
+
                     let path_clone = file_path.clone();
-                    let delete_result: Result<(), String> = if permanent_delete {
-                        tokio::task::spawn_blocking(move || {
-                            std::fs::remove_file(&path_clone).map_err(|e| e.to_string())
-                        }).await.map_err(|e| e.to_string()).and_then(|r| r)
-                    } else {
-                        tokio::task::spawn_blocking(move || {
-                            trash::delete(&path_clone).map_err(|e| e.to_string())
-                        }).await.map_err(|e| e.to_string()).and_then(|r| r)
-                    };
+                    let delete_result: Result<(), String> = tokio::task::spawn_blocking(move || {
+                        trash::delete(&path_clone).map_err(|e| e.to_string())
+                    }).await.map_err(|e| e.to_string()).and_then(|r| r);
 
                     match delete_result {
                         Ok(_) => {
@@ -2118,6 +2322,68 @@ impl Cleaner {
         let mut entries = Vec::new();
 
         for group in groups {
+            if token.is_cancelled() {
+                return Ok(entries);
+            }
+
+            let total_count = group.files.len();
+            if total_count == 0 {
+                continue;
+            }
+
+            let selected_count = group.files.iter().filter(|f| f.selected).count();
+            if selected_count == 0 {
+                continue;
+            }
+
+            // A11.06: Reject groups with all copies selected in backend, regardless of UI.
+            if selected_count >= total_count {
+                anyhow::bail!(
+                    "Safety violation: All {} copies in duplicate group (hash: {}) are selected for quarantine; at least one copy must be preserved",
+                    total_count,
+                    group.hash
+                );
+            }
+
+            // A11.05: Verify and protect at least one independent, unchanged retained copy throughout each group operation.
+            let retained_candidates: Vec<&DuplicateFile> = group.files.iter().filter(|f| !f.selected).collect();
+            let mut verified_retained = None;
+
+            for retained in &retained_candidates {
+                if ensure_not_reparse(&retained.path, "Retained copy").is_err() {
+                    continue;
+                }
+                if ensure_not_hard_link(&retained.path).is_err() {
+                    continue;
+                }
+                if validate_ancestors_safety(&retained.path, None, Some(&self.quarantine_dir)).is_err() {
+                    continue;
+                }
+
+                if let Ok(mut locked) = LockedFile::open_protected_read(&retained.path) {
+                    if locked.identity.len == group.size {
+                        if let Ok(hash) = locked.hash() {
+                            if hash == group.hash {
+                                verified_retained = Some(locked);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let verified_retained = match verified_retained {
+                Some(r) => r,
+                None => {
+                    anyhow::bail!(
+                        "Safety violation: No valid, unchanged retained copy could be verified for duplicate group (hash: {}); aborting group quarantine",
+                        group.hash
+                    );
+                }
+            };
+            let retained_identity = verified_retained.identity.clone();
+
+            // A11.04: Quarantine selected duplicates using full verification and duplicate TOCTOU prevention
             for file in &group.files {
                 if !file.selected {
                     continue;
@@ -2127,7 +2393,11 @@ impl Cleaner {
                     return Ok(entries);
                 }
 
-                match self.quarantine_file(&file.path).await {
+                match self.quarantine_file_with_expected(
+                    &file.path,
+                    Some((&group.hash, group.size)),
+                    Some(&retained_identity),
+                ).await {
                     Ok((key, size, quarantined_at)) => {
                         entries.push(QuarantineEntry {
                             id: None,
@@ -2139,9 +2409,12 @@ impl Cleaner {
                     }
                     Err(e) => {
                         tracing::error!("Failed to quarantine {}: {}", file.path.display(), e);
+                        return Err(e).with_context(|| format!("Failed to safely quarantine duplicate file {:?}", file.path));
                     }
                 }
             }
+
+            drop(verified_retained);
         }
 
         Ok(entries)
@@ -2371,14 +2644,55 @@ impl Cleaner {
         Ok(0)
     }
 
+    #[allow(dead_code)]
     async fn quarantine_file(&self, source: &Path) -> Result<(String, u64, chrono::DateTime<Utc>)> {
+        self.quarantine_file_with_expected(source, None, None).await
+    }
+
+    async fn quarantine_file_with_expected(
+        &self,
+        source: &Path,
+        expected_hash_and_size: Option<(&str, u64)>,
+        retained_identity: Option<&FileIdentity>,
+    ) -> Result<(String, u64, chrono::DateTime<Utc>)> {
         QuarantineRecordV2::validate_original_path(source, &self.quarantine_dir)?;
         let (_lock, mut guard) = self.prepare_locked()?;
 
         let mut source_file = LockedFile::open_source(source)?;
         let identity = source_file.identity.clone();
+
+        if let Some(retained) = retained_identity {
+            if identity.same_object(retained) {
+                anyhow::bail!(
+                    "Safety violation: Target file {:?} is the same file/object as the retained copy; refusing to quarantine",
+                    source
+                );
+            }
+        }
+
         let size = identity.len;
+        if let Some((_, expected_size)) = expected_hash_and_size {
+            if size != expected_size {
+                anyhow::bail!(
+                    "TOCTOU detection: File size changed from {} to {} for {:?}",
+                    expected_size,
+                    size,
+                    source
+                );
+            }
+        }
+
         let hash = source_file.hash()?;
+        if let Some((expected_hash, _)) = expected_hash_and_size {
+            if hash != expected_hash {
+                anyhow::bail!(
+                    "TOCTOU detection: File SHA-256 changed from {} to {} for {:?}",
+                    expected_hash,
+                    hash,
+                    source
+                );
+            }
+        }
 
         let path_hash = {
             let mut hasher = Sha256::new();
@@ -3563,5 +3877,190 @@ mod tests {
         let status = child.wait().unwrap();
         assert!(status.success(), "lock worker failed");
         assert!(exclusive, "second process must not acquire the quarantine lock");
+    }
+
+    #[tokio::test]
+    async fn test_b3_reject_all_copies_selected() {
+        let workspace = TestWorkspace::new("all_copies_selected");
+        let cleaner = workspace.cleaner();
+        let file1 = workspace.source_file("copy1.txt", b"duplicate content");
+        let file2 = workspace.source_file("copy2.txt", b"duplicate content");
+        let hash = "abc123hash".to_string();
+
+        let groups = vec![DuplicateGroup {
+            hash: hash.clone(),
+            size: 17,
+            files: vec![
+                DuplicateFile { path: file1.clone(), created: None, selected: true },
+                DuplicateFile { path: file2.clone(), created: None, selected: true },
+            ],
+        }];
+
+        let token = CancellationToken::new();
+        let res = cleaner.quarantine_selected_duplicates(&groups, token).await;
+        assert!(res.is_err());
+        let err = res.err().unwrap().to_string();
+        assert!(err.contains("Safety violation: All 2 copies"));
+        assert!(file1.exists());
+        assert!(file2.exists());
+    }
+
+    #[tokio::test]
+    async fn test_b3_reject_if_retained_copy_missing_or_corrupted() {
+        let workspace = TestWorkspace::new("retained_corrupted");
+        let cleaner = workspace.cleaner();
+        let file1 = workspace.source_file("retained.txt", b"duplicate content");
+        let file2 = workspace.source_file("duplicate.txt", b"duplicate content");
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"duplicate content");
+        let hash = format!("{:x}", hasher.finalize());
+
+        // Alter retained copy content so hash no longer matches group hash
+        std::fs::write(&file1, b"mutated content!").unwrap();
+
+        let groups = vec![DuplicateGroup {
+            hash: hash.clone(),
+            size: 17,
+            files: vec![
+                DuplicateFile { path: file1.clone(), created: None, selected: false },
+                DuplicateFile { path: file2.clone(), created: None, selected: true },
+            ],
+        }];
+
+        let token = CancellationToken::new();
+        let res = cleaner.quarantine_selected_duplicates(&groups, token).await;
+        assert!(res.is_err());
+        let err = res.err().unwrap().to_string();
+        assert!(err.contains("No valid, unchanged retained copy could be verified"));
+        assert!(file2.exists());
+    }
+
+    #[tokio::test]
+    async fn test_b3_duplicate_toctou_detection() {
+        let workspace = TestWorkspace::new("duplicate_toctou");
+        let cleaner = workspace.cleaner();
+        let file1 = workspace.source_file("retained.txt", b"duplicate content");
+        let file2 = workspace.source_file("duplicate.txt", b"duplicate content");
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"duplicate content");
+        let hash = format!("{:x}", hasher.finalize());
+
+        // Mutate candidate duplicate so size/hash changes after scanning
+        std::fs::write(&file2, b"mutated duplicate!").unwrap();
+
+        let groups = vec![DuplicateGroup {
+            hash: hash.clone(),
+            size: 17,
+            files: vec![
+                DuplicateFile { path: file1.clone(), created: None, selected: false },
+                DuplicateFile { path: file2.clone(), created: None, selected: true },
+            ],
+        }];
+
+        let token = CancellationToken::new();
+        let res = cleaner.quarantine_selected_duplicates(&groups, token).await;
+        assert!(res.is_err());
+        let err = format!("{:#}", res.err().unwrap());
+        assert!(err.contains("TOCTOU detection"), "Actual error was: {}", err);
+        assert!(file1.exists());
+        assert!(file2.exists());
+    }
+
+    #[test]
+    fn test_b3_validate_clean_path_rejections() {
+        let workspace = TestWorkspace::new("path_validation");
+        let cleaner = workspace.cleaner();
+        let base = workspace.source.clone();
+
+        // Relative path
+        assert!(cleaner.validate_clean_path(Path::new("relative/file.tmp"), &base).is_err());
+
+        // Traversal path
+        let traversal = base.join("sub").join("..").join("outside.tmp");
+        assert!(cleaner.validate_clean_path(&traversal, &base).is_err());
+
+        // Path outside base
+        let outside = workspace.root.join("other_folder").join("file.tmp");
+        assert!(cleaner.validate_clean_path(&outside, &base).is_err());
+
+        // Path inside quarantine dir
+        let inside_quarantine = workspace.quarantine.join("danger.tmp");
+        assert!(cleaner.validate_clean_path(&inside_quarantine, &workspace.quarantine).is_err());
+
+        // Valid path inside base
+        let valid = base.join("valid.tmp");
+        assert!(cleaner.validate_clean_path(&valid, &base).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_b3_hard_link_rejected_in_duplicates() {
+        use windows::core::HSTRING;
+        use windows::Win32::Storage::FileSystem::CreateHardLinkW;
+
+        let workspace = TestWorkspace::new("hard_link_duplicates");
+        let cleaner = workspace.cleaner();
+        let file1 = workspace.source_file("retained.txt", b"duplicate content");
+        let link_path = workspace.source.join("hardlink.txt");
+
+        let file1_w = HSTRING::from(file1.to_string_lossy().as_ref());
+        let link_w = HSTRING::from(link_path.to_string_lossy().as_ref());
+        let res = unsafe { CreateHardLinkW(&link_w, &file1_w, None) };
+        if res.is_ok() {
+            let mut hasher = Sha256::new();
+            hasher.update(b"duplicate content");
+            let hash = format!("{:x}", hasher.finalize());
+
+            let groups = vec![DuplicateGroup {
+                hash: hash.clone(),
+                size: 17,
+                files: vec![
+                    DuplicateFile { path: link_path.clone(), created: None, selected: false },
+                    DuplicateFile { path: file1.clone(), created: None, selected: true },
+                ],
+            }];
+
+            let token = CancellationToken::new();
+            let r = cleaner.quarantine_selected_duplicates(&groups, token).await;
+            assert!(r.is_err(), "Hard linked retained copy must be rejected");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_b3_duplicate_target_same_object_as_retained_rejected() {
+        let workspace = TestWorkspace::new("same_object_rejected");
+        let cleaner = workspace.cleaner();
+        let file1 = workspace.source_file("retained.txt", b"duplicate content");
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"duplicate content");
+        let hash = format!("{:x}", hasher.finalize());
+
+        // Retained copy and candidate point to exact same file
+        let groups = vec![DuplicateGroup {
+            hash: hash.clone(),
+            size: 17,
+            files: vec![
+                DuplicateFile { path: file1.clone(), created: None, selected: false },
+                DuplicateFile { path: file1.clone(), created: None, selected: true },
+            ],
+        }];
+
+        let token = CancellationToken::new();
+        let r = cleaner.quarantine_selected_duplicates(&groups, token).await;
+        assert!(r.is_err(), "Target pointing to exact same file object as retained copy must be rejected");
+        let err = format!("{:#}", r.err().unwrap());
+        assert!(
+            err.contains("same file/object")
+                || err.contains("Safety violation")
+                || err.contains("0x80070020")
+                || err.contains("utilizado por otro proceso")
+                || err.contains("sharing violation"),
+            "Actual error was: {}",
+            err
+        );
+        assert!(file1.exists());
     }
 }

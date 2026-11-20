@@ -51,12 +51,12 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
 
 | Subhallazgo | Definición Canónica | Estado Actual | Bloque Asignado |
 |---|---|:---:|:---:|
-| **A11.01** | Path validation | Pendiente de corrección | Bloque 3 |
-| **A11.02** | Protected directories | Pendiente de corrección | Bloque 3 |
-| **A11.03** | Symlinks/junctions/hard links | Pendiente de corrección | Bloque 3 |
-| **A11.04** | Duplicate TOCTOU | Pendiente de corrección | Bloque 3 (Obligatorio) |
-| **A11.05** | Retained copy validation | Pendiente de corrección | Bloque 3 |
-| **A11.06** | Prevent selecting all copies | Pendiente de corrección | Bloque 3 |
+| **A11.01** | Path validation | Implementado (pendiente revisión externa) | Bloque 3 |
+| **A11.02** | Protected directories | Implementado (pendiente revisión externa) | Bloque 3 |
+| **A11.03** | Symlinks/junctions/hard links | Implementado (pendiente revisión externa) | Bloque 3 |
+| **A11.04** | Duplicate TOCTOU | Implementado (pendiente revisión externa) | Bloque 3 (Obligatorio) |
+| **A11.05** | Retained copy validation | Implementado (pendiente revisión externa) | Bloque 3 |
+| **A11.06** | Prevent selecting all copies | Implementado (pendiente revisión externa) | Bloque 3 |
 | **A11.07** | Atomic manifest | Corregido en B2A | Bloque 2 |
 | **A11.08** | Restore overwrite | Corregido en B2B | Bloque 2 |
 | **A11.09** | Quarantine retention | **CONTENIDO TEMPORALMENTE** (Purga suspendida) | **Bloque 1** |
@@ -66,7 +66,7 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
 | **A11.13** | User confirmations | Pendiente de corrección | Bloque 4 |
 | **A11.14** | UI error reporting | Pendiente de corrección | Bloque 4 |
 | **A11.15** | Unsafe file opening | Pendiente de corrección | Bloque 4 |
-| **A11.16** | Regression tests | En progreso (38 tests de cleaner; 83 totales) | Bloque 5 |
+| **A11.16** | Regression tests | En progreso (44 tests de cleaner; 89 totales) | Bloque 5 |
 
 ---
 
@@ -101,13 +101,14 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
      - 28 pruebas de B2B (38 pruebas de cleaner en total; 83 totales en workspace). La purga automática sigue suspendida (A11.09 CONTENIDO TEMPORALMENTE).
    - **Pendiente del Bloque 2:** Ninguno. A11.04 asignado obligatoriamente a Bloque 3.
    - **Bloque 2C:** No autorizado ni iniciado.
-3. **Bloque 3: Seguridad de rutas y duplicados (PENDIENTE - INCLUYE A11.04 OBLIGATORIO)**
-   - Path validation (A11.01).
-   - Protected directories (A11.02).
-   - Symlinks/junctions/hard links (A11.03).
-   - Duplicate TOCTOU (A11.04 - OBLIGATORIO).
-   - Retained copy validation (A11.05).
-   - Prevent selecting all copies (A11.06).
+3. **Bloque 3: Seguridad de rutas y duplicados (EJECUTADO)**
+   - **Path validation (A11.01):** Validación estricta con `validate_clean_path` y `validate_ancestors_safety`. Rechazo de rutas relativas, componentes transversales (`..`, `.`) y rutas fuera del directorio base permitido.
+   - **Protected directories (A11.02):** Función canónica `is_protected_path` que previene operaciones sobre directorios de sistema (Windows, Program Files, ProgramData, `/bin`, `/etc`, etc.), directorio de la aplicación (`syspulse.db`, `settings.toml`), directorio de cuarentena y raíces de disco.
+   - **Symlinks/junctions/hard links (A11.03):** Rechazo preventivo de reparse points (`ensure_not_reparse`) en objetivos, ancestros y destino; detección y rechazo de enlaces duros (`ensure_not_hard_link`, `FileIdentity.number_of_links > 1`) para evitar eliminación accidental de copias vinculadas.
+   - **Duplicate TOCTOU (A11.04 - OBLIGATORIO):** Mitigación mediante apertura previa de handle exclusivo (`LockedFile::open_source`) y verificación atómica de longitud y hash SHA-256 (`quarantine_file_with_expected`) comparados con el escaneo previo, abortando ante cualquier mutación concurrente antes del traslado seguro.
+   - **Retained copy validation (A11.05):** Verificación exhaustiva de al menos una copia retenida independiente, válida e inalterada con descriptor protegido (`open_protected_read`) activo durante toda la operación de grupo, con comprobación anti-colisión de identidad de objeto (`identity.same_object`).
+   - **Prevent selecting all copies (A11.06):** Verificación obligatoria en backend de que `selected_count < total_count`, rechazando a nivel de motor cualquier solicitud que pretenda poner en cuarentena o eliminar todas las copias de un grupo.
+   - **Suite de pruebas:** 6 pruebas unitarias nuevas agregadas (44 pruebas de cleaner; 89 en total en el workspace).
 4. **Bloque 4: Seguridad de interfaz (PENDIENTE)**
    - User confirmations (A11.13).
    - UI error reporting (A11.14).

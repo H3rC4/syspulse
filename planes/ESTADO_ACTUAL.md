@@ -1,7 +1,7 @@
 # SysPulse — Documento Permanente de Estado y Continuidad de Contexto
 
 **Ubicación:** `planes/ESTADO_ACTUAL.md`  
-**Última actualización:** 20 de noviembre de 2026 (Auditoría A11: Bloques 1, 2A y 2B completados con revisiones R01–R05/R07 integradas y verificaciones B2B; R06 pendiente para Bloque 4; A11.04 asignado obligatoriamente a Bloque 3; Bloque 2C no autorizado)
+**Última actualización:** 20 de noviembre de 2026 (Auditoría A11: Bloques 1, 2A, 2B y 3 completados; A11.01–A11.06 verificados con 89 tests; R06 pendiente para Bloque 4; Bloque 2C no autorizado; Próxima tarea: Bloque 4)
 **Rama activa:** `review/a11-block-2b` (en desarrollo sobre base `develop/v0.4.0`)
 **Versión de producción:** v0.3.1 (Setup oficial generado: `output/SysPulse-Setup-0.3.1.exe`)  
 **Versión en desarrollo:** v0.4.0 (PIE Core & Network Guardian)  
@@ -19,9 +19,9 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 | Componente | Estado | Notas Técnicas |
 |---|---|---|
-| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (83 tests unitarios pasando). |
+| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (89 tests unitarios pasando). |
 | **System Monitor** | ✅ Completado | Desacoplado asíncronamente con Tokio (60+ FPS fluidos en Slint). Emisión de telemetría a PIE (`CpuLoad`, `MemoryPressure`, `NetworkThroughput`, `ThermalAlert`). |
-| **Smart Cleaner** | 🟡 Bloques 2A/2B completados; purga suspendida | Manifiesto v2 atómico, bloqueo entre procesos (`QuarantineProcessLock`), transacciones con staging, SHA-256, no-replace, recuperación `Staged`/`Restoring`, preservación ADS/atributos NTFS, validación de rutas/reparse, backup v1 protegido y fail-closed en enumeración y claves duplicadas/colisionantes. A11.10 y R04 permanecen contenidos temporalmente (cross-volume destructivo deshabilitado preventivamente; staging y origen preservados). Semántica de Papelera en `delete_quarantine_permanently` preservada. Revisiones R01–R03, R05 y R07 integradas; R06 pendiente para Bloque 4. A11.04 asignado obligatoriamente a Bloque 3. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). 38 pruebas de cleaner/cuarentena (83 totales en workspace). |
+| **Smart Cleaner** | 🟡 Bloques 1, 2A/2B y 3 completados; purga suspendida | Manifiesto v2 atómico, bloqueo entre procesos (`QuarantineProcessLock`), transacciones con staging, SHA-256, no-replace, recuperación `Staged`/`Restoring`, preservación ADS/atributos NTFS, validación de rutas/reparse, backup v1 protegido, fail-closed en duplicados y control names (R01–R03, R05, R07). Bloque 3 ejecutado: validación estricta de rutas y componentes transversales (`validate_clean_path`, A11.01), directorios protegidos (`is_protected_path`, A11.02), rechazo de reparse points y enlaces duros (`ensure_not_hard_link`, A11.03), mitigación TOCTOU en duplicados mediante verificación atómica por handle de tamaño y SHA-256 (`quarantine_file_with_expected`, A11.04 OBLIGATORIO), verificación y retención de descriptor protegido de copia retenida inalterada (`open_protected_read` y anti-colisión de identidad, A11.05), y rechazo obligatorio en backend ante selección de todas las copias de un grupo (A11.06). A11.10 y R04 permanecen contenidos temporalmente (cross-volume destructivo deshabilitado). Semántica de Papelera en `delete_quarantine_permanently` preservada. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). 44 pruebas de cleaner/cuarentena (89 totales en workspace). |
 | **CPU Focus** | ✅ Completado | Prioridad `ABOVE_NORMAL_PRIORITY_CLASS` (Win32) y memoria en MB reales. |
 | **Process Hunter** | ✅ Completado | Registro forense continuo en SQLite (`syspulse.db`), cálculo de tiempo de vida en procesos transitorios (< 5s), purga horaria y exportación a JSON/CSV. Emisión de eventos a PIE (`ProcessSpawned`, `UntrustedExecutionLocation`, `TransientProcessDetected`). |
 | **System Tray & Ajustes** | ✅ Completado | Minimizar a bandeja, autoarranque en Registro (`HKCU\...\Run`), detección robusta de `icon.ico`. Retención de métricas de red configurable (`net_metrics_retention_days`). |
@@ -151,10 +151,10 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 - **Resultado de Bloques 2A/2B:** `cargo check` limpio, 83 tests pasando y sin advertencias nuevas de clippy. Cuarentena/restauración transaccional con staging, SHA-256, no-replace (`LockedFile`), recuperación tras fallos, bloqueo entre procesos (`QuarantineProcessLock`), ADS y atributos NTFS preservados, fail-closed en enumeración y backup v1 protegido (R01–R03, R05 y R07 integradas). Semántica de Papelera en `delete_quarantine_permanently` preservada. A11.10 y R04 permanecen contenidos temporalmente (deshabilitadas transferencias destructivas cross-volume; staging y origen preservados). R06 pendiente para Bloque 4. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). A11.04 asignado obligatoriamente a Bloque 3; Bloque 2C no autorizado.
 - **Secuencia de Trabajo Planificada para A11:**
   - **Bloque 1:** Contención inmediata A11.09 — ✅ COMPLETADO (CONTENIDO TEMPORALMENTE).
-  - **Bloque 2:** Integridad, persistencia y restauración de cuarentena — ✅ 2A/2B COMPLETADOS (R01–R05/R07 integradas); A11.04 reasignado obligatoriamente a Bloque 3.
-  - **Bloque 3:** Seguridad de rutas y duplicados (incluye A11.04 obligatorio) — 🟡 PENDIENTE.
-  - **Bloque 4:** Seguridad de interfaz — 🟡 PENDIENTE.
-  - **Bloque 5:** Validación integral — 🟡 PENDIENTE.
+  - **Bloque 2:** Integridad, persistencia y restauración de cuarentena — ✅ 2A/2B COMPLETADOS (R01–R05/R07 integradas).
+  - **Bloque 3:** Seguridad de rutas y duplicados (A11.01–A11.06, incluye A11.04 obligatorio) — ✅ COMPLETADO (44 tests de cleaner, 89 totales).
+  - **Bloque 4:** Seguridad de interfaz (A11.13–A11.15 y R06) — 🟡 PENDIENTE.
+  - **Bloque 5:** Validación integral (A11.16) — 🟡 PENDIENTE.
 
 ---
 
@@ -162,7 +162,7 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 1. Leer directamente este archivo (`planes/ESTADO_ACTUAL.md`), [AGENTS.md](file:///D:/proyectos/SysPulse/AGENTS.md) y [planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md).
 2. **Rama activa:** Mantenerse en `review/a11-block-2b` (o la rama indicada por el usuario).
-3. **Próxima tarea a autorizar:** **Bloque 3 de A11** (seguridad de rutas y duplicados, incluyendo obligatoriamente A11.04). No iniciar sin autorización previa. No mergear ni iniciar Bloque 2C.
+3. **Próxima tarea a autorizar:** **Bloque 4 de A11** (seguridad de interfaz: confirmaciones de usuario A11.13, reporte de errores en UI A11.14, apertura segura A11.15 y tratamiento de R06). No iniciar sin autorización previa. No mergear ni iniciar Bloque 2C.
 4. **No iniciar la Subtarea 4.4** ni fases posteriores (Fase 5) hasta concluir los bloques de seguridad autorizados de Smart Cleaner.
 5. No modificar código sin autorización previa ni realizar commit/push.
 
