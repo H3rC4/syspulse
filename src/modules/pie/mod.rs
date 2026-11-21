@@ -3,6 +3,7 @@
 
 pub mod bus;
 pub mod engine;
+pub mod exporter;
 pub mod models;
 pub mod rules;
 #[cfg(test)]
@@ -10,6 +11,7 @@ mod tests;
 
 pub use bus::PulseEventBus;
 pub use engine::PulseIntelligenceEngine;
+pub use exporter::{ForensicExportFormat, ForensicExporter, ForensicReport};
 pub use models::{
     Incident, IncidentCategory, IncidentEvidence, IncidentSeverity, IncidentStatus,
     PersistedNetDevice, PersistedNetMetric, ProcessIdentity, PulseCriticalEvent, PulseEnvelope,

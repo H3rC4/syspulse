@@ -21,7 +21,7 @@ type NetQualitySample = (Option<f32>, Option<f32>, Option<f32>, Instant);
 
 /// Motor central de inteligencia y correlación heurística de SysPulse (PIE Core).
 pub struct PulseIntelligenceEngine {
-    db: Arc<Mutex<Connection>>,
+    pub(crate) db: Arc<Mutex<Connection>>,
     recent_events: VecDeque<PulseEnvelope>,
     rules: Vec<CorrelationRule>,
     last_purge_time: Instant,
@@ -1404,6 +1404,31 @@ impl PulseIntelligenceEngine {
             params![status.as_str(), Utc::now().to_rfc3339(), id],
         )?;
         Ok(())
+    }
+
+    /// Exporta incidentes persistidos y sus evidencias a JSON o CSV estructurado para análisis forense por IA.
+    pub async fn export_forensic_incidents(
+        &self,
+        format: crate::modules::pie::exporter::ForensicExportFormat,
+        path: &std::path::Path,
+        status_filter: Option<IncidentStatus>,
+    ) -> Result<()> {
+        let db = self.db.lock().await;
+        crate::modules::pie::exporter::ForensicExporter::export_from_db(
+            &db,
+            format,
+            path,
+            status_filter,
+        )
+    }
+
+    /// Consulta todos los incidentes persistidos en la base de datos (con o sin filtro de estado) y sus evidencias asociadas.
+    pub async fn get_all_incidents(
+        &self,
+        status_filter: Option<IncidentStatus>,
+    ) -> Result<Vec<Incident>> {
+        let db = self.db.lock().await;
+        crate::modules::pie::exporter::ForensicExporter::query_incidents(&db, status_filter)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

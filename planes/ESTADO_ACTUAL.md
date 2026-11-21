@@ -1,7 +1,7 @@
 # SysPulse — Documento Permanente de Estado y Continuidad de Contexto
 
 **Ubicación:** `planes/ESTADO_ACTUAL.md`  
-**Última actualización:** 21 de noviembre de 2026 (Auditoría A11: Bloques 1, 2A, 2B, 3, 4 y 5 COMPLETADOS; A11.01–A11.16 y R01–R10 verificados con 92 tests; Smart Cleaner finalizado en desarrollo; Próxima tarea: Subtarea 4.4 de PIE)
+**Última actualización:** 21 de noviembre de 2026 (Auditoría A11 completada; PIE Core Fase 0 y Fase 4 completas con Subtareas 4.1 a 4.4; 98 tests unitarios pasando; Próxima tarea: Fase 5 - UI Slint Neón y Correlación con Process Hunter)
 **Rama activa:** `review/a11-block-2b` (en desarrollo sobre base `develop/v0.4.0`)
 **Versión de producción:** v0.3.1 (Setup oficial generado: `output/SysPulse-Setup-0.3.1.exe`)  
 **Versión en desarrollo:** v0.4.0 (PIE Core & Network Guardian)  
@@ -19,14 +19,14 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 | Componente | Estado | Notas Técnicas |
 |---|---|---|
-| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (92 tests unitarios pasando). |
+| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (98 tests unitarios pasando). |
 | **System Monitor** | ✅ Completado | Desacoplado asíncronamente con Tokio (60+ FPS fluidos en Slint). Emisión de telemetría a PIE (`CpuLoad`, `MemoryPressure`, `NetworkThroughput`, `ThermalAlert`). |
 | **Smart Cleaner** | ✅ Bloques 1 a 5 completados; purga suspendida (A11.09) y cross-volume destructivo deshabilitado (A11.10) | Manifiesto v2 atómico, bloqueo entre procesos (`QuarantineProcessLock`), transacciones con staging, SHA-256, no-replace, recuperación `Staged`/`Restoring`, preservación ADS/atributos NTFS, validación de rutas/reparse, backup v1 protegido, fail-closed en duplicados y control names (R01–R03, R05, R07). Bloque 3 ejecutado: validación estricta de rutas y componentes transversales (`validate_clean_path`, A11.01), directorios protegidos (`is_protected_path`, A11.02), rechazo de reparse points y enlaces duros (`ensure_not_hard_link`, A11.03), mitigación TOCTOU en duplicados mediante verificación atómica por handle de tamaño y SHA-256 (`quarantine_file_with_expected`, A11.04 OBLIGATORIO), verificación y retención de descriptor protegido de copia retenida inalterada (`open_protected_read` y anti-colisión de identidad, A11.05), y rechazo obligatorio en backend ante selección de todas las copias de un grupo (A11.06). Bloque 4 ejecutado: diálogos de confirmación previa con conteo y bytes (`rfd::MessageDialog`, A11.13), reporte visual de errores en UI y logs (`set_cleaner_status`, A11.14), apertura segura de archivos mediante acción "Reveal" en explorador en vez de ejecución directa (A11.15), identificación unívoca por clave estable en operaciones de restauración y borrado (`entry.key`, R06), caché de tamaños escaneados y `raw-size` (R08), blindaje de directorios reales de SysPulse (`app_data_dir`, `db_path`, `logs_dir`, `settings_path`, R09) y desactivación segura de borrado permanente directo ruteando a papelera (R10). Bloque 5 ejecutado: validación integral de ciclo de vida con archivos temporales descartables (`test_b5_final_validation_lifecycle`, A11.16). A11.10 y R04 permanecen contenidos temporalmente (cross-volume destructivo deshabilitado). Semántica de Papelera en `delete_quarantine_permanently` preservada. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). 47 pruebas de cleaner/cuarentena (92 totales en workspace). |
 | **CPU Focus** | ✅ Completado | Prioridad `ABOVE_NORMAL_PRIORITY_CLASS` (Win32) y memoria en MB reales. |
 | **Process Hunter** | ✅ Completado | Registro forense continuo en SQLite (`syspulse.db`), cálculo de tiempo de vida en procesos transitorios (< 5s), purga horaria y exportación a JSON/CSV. Emisión de eventos a PIE (`ProcessSpawned`, `UntrustedExecutionLocation`, `TransientProcessDetected`). |
 | **System Tray & Ajustes** | ✅ Completado | Minimizar a bandeja, autoarranque en Registro (`HKCU\...\Run`), detección robusta de `icon.ico`. Retención de métricas de red configurable (`net_metrics_retention_days`). |
 | **Instalador Oficial** | ✅ Completado | Compilado con Inno Setup 7 (`SysPulse-Setup-0.3.1.exe`, ~7.2 MB). |
-| **Pulse Intelligence Engine (PIE)** | ✅ Fase 0 y Fase 4 (Subtareas 4.1, 4.2 y 4.3 Completadas) | Event Bus centralizado con canal `broadcast(256)` y `mpsc(1024)`. Esquema SQLite versionado (`PRAGMA user_version = 3`) con clave compuesta `(network_id, mac)`, `correlation_key`, `last_updated` e índices compuestos. Motor de correlación heurística en tiempo real con 7 reglas prioritarias respaldadas 100% por productores reales, confirmación de condiciones sostenidas, histéresis, deduplicación entre reinicios mediante precarga de caché de incidentes activos, debouncing de evidencias (10s), resolución automática y preparación de explicabilidad en Modo Simple y Avanzado con soporte de i18n Fluent EN / ES-AR. 21 tests de PIE ok. |
+| **Pulse Intelligence Engine (PIE)** | ✅ Fase 0 y Fase 4 Completadas (Subtareas 4.1 a 4.4) | Event Bus centralizado con canal `broadcast(256)` y `mpsc(1024)`. Esquema SQLite versionado (`PRAGMA user_version = 3`) con clave compuesta `(network_id, mac)`, `correlation_key`, `last_updated` e índices compuestos. Motor de correlación heurística en tiempo real con 7 reglas prioritarias respaldadas 100% por productores reales, confirmación de condiciones sostenidas, histéresis, deduplicación entre reinicios, debouncing de evidencias (10s), resolución automática y explicabilidad Modo Simple/Avanzado bilingüe Fluent. Exportador forense unificado (Subtarea 4.4) a JSON estructurado y CSV RFC 4180 de incidentes y evidencias para análisis de IA local/offline con ordenamiento determinista. 33 tests de PIE ok (27 de reglas/persistencia + 6 de exportación forense; 98 en workspace). |
 | **Network Guardian** | ✅ Fases 1, 2 y 3 Completadas (100% de los 11 Requisitos Verificados) | Detección de interfaces físicas/virtuales (`GetAdaptersAddresses`), sondeo ICMP nativo sin UAC, RTT, Jitter RFC 3550 y Packet Loss. `WifiAnalyzer` nativo (`wlanapi.dll`): diagnóstico completo, detección de redes inseguras, matriz de congestión ponderada por RSSI y recomendación explicable. `DeviceScanner`: descubrimiento pasivo ARP kernel, escáner activo SendARP acotado (máx 25 req/s), resolución de hostnames con pool acotado (`Semaphore(4)` + `JoinSet`), base OUI oficial IEEE con detección estricta LAA, segmentación por red (`NetworkContext`), vistas duales Simple/Avanzado y eventos automáticos a PIE con baseline silencioso. 18 tests de red ok. |
 
 ---
@@ -64,14 +64,22 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
   - Resolución automática de incidentes por histéresis al normalizarse las condiciones medidas.
   - Preparación de datos para Modo Simple (resumen y recomendaciones amigables) y Modo Avanzado (impacto técnico, mitigación, limitaciones del diagnóstico sin afirmar certezas de malware) e integración de claves i18n en Fluent (`locales/es-AR/main.ftl` y `locales/en/main.ftl`).
   - Suite de pruebas de PIE ampliada a 27 pruebas unitarias (45 pruebas totales en el workspace).
+- **Fase 4: Subtarea 4.4 (Exportador Forense Unificado para IA a JSON y CSV):**
+  - Módulo `src/modules/pie/exporter.rs` con `ForensicExporter` y `ForensicExportFormat` (Json, Csv).
+  - Exportación de incidentes y evidencias persistidas en SQLite (`pie_incidents`, `pie_incident_evidences`) sin mutaciones (solo lectura).
+  - Formato JSON con estructura `ForensicReport` estructurada (`generated_at_utc`, `schema_version`, conteos e incidentes anidados con evidencias).
+  - Formato CSV RFC 4180 con 21 columnas relacionales desnormalizadas preservando contexto relacional completo y escapado robusto.
+  - Ordenamiento determinista (`id ASC`, evidencia `timestamp ASC, id ASC`) y manejo elegante de base de datos vacía e I/O errors.
+  - Operación 100% local, offline y disparada bajo demanda; sin llamadas ni subidas a APIs externas.
+  - 6 pruebas unitarias focalizadas (33 pruebas de PIE; 98 tests totales en el workspace).
 
 ---
 
 ## 4. Resultados de Validación Técnica
 
 - **`cargo check`:** ✅ 0 errores, 0 advertencias en todo el workspace.
-- **`cargo test`:** ✅ 83 pruebas unitarias pasando (0 fallos, 0 ignoradas) en Windows `x86_64-pc-windows-msvc`.
-- **`cargo clippy --all-targets`:** ✅ 0 errores; 12 advertencias únicas preexistentes (4 de cleaner, 1 de process_hunter, 3 de tray, 4 de main), sin advertencias nuevas introducidas por B2 ni revisiones R01–R07.
+- **`cargo test`:** ✅ 98 pruebas unitarias pasando (0 fallos, 0 ignoradas) en Windows `x86_64-pc-windows-msvc`.
+- **`cargo clippy --all-targets`:** ✅ 0 errores; advertencias preexistentes intactas sin advertencias nuevas introducidas.
 - **`git diff --check`:** ✅ 0 errores de whitespace.
 
 ---
@@ -79,15 +87,17 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 ## 5. Archivos Modificados en el Entorno de Trabajo
 
 ### Archivos de Planificación y Estado:
-- `planes/ESTADO_ACTUAL.md` (actualizado con la culminación de Subtareas 4.1, 4.2 y 4.3)
-- `planes/PLAN_DE_ACCION.md` (desglose y marcado de Subtareas 4.1, 4.2 y 4.3)
+- `planes/ESTADO_ACTUAL.md` (actualizado con la culminación de Subtareas 4.1, 4.2, 4.3 y 4.4)
+- `planes/PLAN_DE_ACCION.md` (desglose y marcado de Subtareas 4.1, 4.2, 4.3 y 4.4)
 - `planes/PLAN_NETWORK_GUARDIAN.md` (esquema SQLite actualizado con Alternativa D)
 
 ### Módulo PIE Core (`src/modules/pie/`):
+- `exporter.rs`: Exportador forense unificado de incidentes y evidencias a JSON (`ForensicReport`) y CSV tabular RFC 4180 con consultas de solo lectura, ordenamiento determinista y soporte offline.
+- `engine.rs`: Integración de métodos asíncronos de exportación (`export_forensic_incidents`, `get_all_incidents`) y delegación en `ForensicExporter`.
+- `mod.rs`: Re-exportación de `ForensicExportFormat`, `ForensicExporter` y `ForensicReport`.
 - `models.rs`: Modelos `Incident` (con `correlation_key`, `last_updated_utc`, `technical_impact`, `technical_mitigation`, `diagnostic_limitations`) y `TelemetryEvent::NetworkLatencySample` con `gateway_rtt_ms` e `internet_rtt_ms`.
 - `rules.rs`: 8 reglas de correlación completas con explicabilidad para Modo Simple y Avanzado (sin afirmaciones de malware, throttling ni fugas de memoria sin evidencia).
-- `engine.rs`: Migración versionada v3 (`PRAGMA user_version = 3`), evaluación en tiempo real de las 7 reglas prioritarias, duración configurable de CPU (15–30s), seguimiento acotado de consumo de procesos con `ProcessIdentity`, alertas térmicas diferenciadas por sensor, deduplicación entre reinicios, debouncing de evidencias (10s), resolución e histéresis automáticas.
-- `tests.rs`: 27 pruebas unitarias completas de PIE (pruebas positivas y negativas por regla, histéresis, resolución, deduplicación entre reinicios, debouncing, aislamiento de red, confirmación de CPU, crecimiento de memoria y sensores térmicos).
+- `tests.rs`: 27 pruebas unitarias completas de PIE.
 
 ### Smart Cleaner / Auditoría A11:
 - `src/modules/cleaner.rs`: manifiesto v2 atómico, bloqueo entre procesos (`QuarantineProcessLock`), validación de rutas/reparse, transacciones de cuarentena y restauración con staging, SHA-256, no-replace (`LockedFile`), recuperación `Staged`/`Restoring`, ADS y atributos NTFS preservados, y 25 pruebas de regresión de B2B (35 de cleaner en total; 80 totales en workspace). Reversión de borrado físico en `delete_quarantine_permanently` preservando papelera.
@@ -162,8 +172,8 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 1. Leer directamente este archivo (`planes/ESTADO_ACTUAL.md`), [AGENTS.md](file:///D:/proyectos/SysPulse/AGENTS.md) y [planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md).
 2. **Rama activa:** Mantenerse en `review/a11-block-2b` (o la rama indicada por el usuario).
-3. **Próxima tarea a autorizar:** **Subtarea 4.4 de PIE** (Exportador forense unificado de incidentes y evidencias a JSON estructurado y CSV para IA).
-4. **No iniciar la Fase 5** (UI Slint Neón) hasta concluir la Subtarea 4.4 de PIE.
+3. **Próxima tarea a autorizar:** **Fase 5** (UI Slint Neón y Correlación con Process Hunter).
+4. **Fase 4 concluida:** Subtareas 4.1 a 4.4 finalizadas y verificadas con 98 tests unitarios pasando.
 5. No modificar código sin autorización previa ni realizar commit/push.
 
 ---
