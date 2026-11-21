@@ -213,8 +213,8 @@ flowchart TD
     - Sub-pestañas: Dispositivos (inventario, alias, badges de confianza), Wi-Fi Analyzer (SSID, canal, dBm, mapa de congestión y recomendaciones), Calidad de Enlace (latencias gateway/internet, jitter RFC 3550, packet loss), y Conexiones (sockets activos mapeados a proceso y PID).
     - Estados de carga, vacío, error y no disponible integrados con la paleta visual neón.
     - Contratos de UI y conversor en `ui_adapter.rs` con 6 tests unitarios (109 tests totales en workspace).
-  - [ ] **Subtarea 5.3: Centro de Incidentes de PIE en Slint (`PieIncidentsTab`):**
-    - Vista interactiva de incidentes con severity badges, filtros, modo dual (Simple/Avanzado), evidencias observables y exportación forense.
+  - [x] **Subtarea 5.3: Centro de Incidentes de PIE en Slint (`PieIncidentsTab`) (EJECUTADO):**
+    - Vista interactiva de incidentes con severity badges, filtros (All, Active, Resolved), modo dual (Simple/Avanzado), evidencias observables, acciones explícitas de exportación JSON/CSV con `ForensicExporter` y estados vacíos/error.
   - [ ] **Subtarea 5.4: Conexión de Controladores Asíncronos en `src/main.rs` e i18n:**
     - Handlers de refresco y escaneo manual sin bloqueos de renderizado.
 

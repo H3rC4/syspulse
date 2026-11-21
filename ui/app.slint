@@ -2394,6 +2394,563 @@ component NetworkGuardianTab inherits Rectangle {
     }
 }
 
+// ── PIE Incidents Center Tab ──
+
+component PieIncidentsTab inherits Rectangle {
+    in property <[PieIncidentData]> incidents: [];
+    in-out property <int> selected-id: -1;
+    in-out property <PieIncidentData> selected-incident;
+    in-out property <int> filter-status: 0; // 0: All, 1: Active, 2: Resolved
+    in-out property <bool> is-advanced-view: false;
+    in property <bool> is-loading: false;
+    in property <string> error-message: "";
+
+    callback refresh();
+    callback filter-changed(int);
+    callback export-json();
+    callback export-csv();
+
+    VerticalLayout {
+        padding-left: 36px;
+        padding-right: 36px;
+        padding-top: 28px;
+        padding-bottom: 28px;
+        spacing: 20px;
+
+        // Header Title & Description
+        VerticalLayout {
+            spacing: 6px;
+            SectionTitle { text: "Centro de Inteligencia y Diagnósticos"; }
+            SectionDescription { text: "Diagnósticos correlacionados de seguridad y rendimiento entre sistema, red y procesos."; }
+        }
+
+        // Toolbar: Filters, Mode Toggle & Actions
+        HorizontalLayout {
+            spacing: 10px;
+
+            // Filtros de estado
+            TabPill {
+                label: "Todos";
+                active: filter-status == 0;
+                clicked => { filter-status = 0; filter-changed(0); }
+            }
+            TabPill {
+                label: "Activos";
+                active: filter-status == 1;
+                clicked => { filter-status = 1; filter-changed(1); }
+            }
+            TabPill {
+                label: "Resueltos";
+                active: filter-status == 2;
+                clicked => { filter-status = 2; filter-changed(2); }
+            }
+
+            Rectangle { width: 12px; }
+
+            // Modo Simple vs Avanzado Toggle
+            TabPill {
+                label: is-advanced-view ? "Vista: Avanzada" : "Vista: Simple";
+                active: is-advanced-view;
+                clicked => { is-advanced-view = !is-advanced-view; }
+            }
+
+            Rectangle { }
+
+            NeonButton {
+                text: is-loading ? "Actualizando..." : "Actualizar";
+                enabled: !is-loading;
+                clicked => { refresh(); }
+            }
+
+            NeonButton {
+                text: "Exportar JSON";
+                primary: false;
+                clicked => { export-json(); }
+            }
+
+            NeonButton {
+                text: "Exportar CSV";
+                primary: false;
+                clicked => { export-csv(); }
+            }
+        }
+
+        // Error Banner
+        if error-message != "": Rectangle {
+            height: 42px;
+            background: #ff4d6d18;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.danger;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 10px;
+
+                Text {
+                    text: "\u{26A0}";
+                    font-size: 16px;
+                    color: Theme.danger;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: error-message;
+                    font-size: 12px;
+                    color: Theme.danger;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Loading Banner
+        if is-loading: Rectangle {
+            height: 38px;
+            background: Theme.card-bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.neon-cyan-dim;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 10px;
+
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: Theme.neon-cyan;
+                }
+
+                Text {
+                    text: "Consultando incidentes e historial forense...";
+                    font-size: 12px;
+                    color: Theme.neon-cyan;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Empty State
+        if incidents.length == 0 && !is-loading && error-message == "": Rectangle {
+            height: 220px;
+            background: Theme.card-bg;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                Text {
+                    text: "\u{2728}";
+                    font-size: 34px;
+                    color: Theme.neon-green;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "No se registran incidentes";
+                    font-size: 15px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "Todos los subsistemas (Sistema, Red y Procesos) operan dentro de parámetros normales.";
+                    font-size: 12px;
+                    color: Theme.text-secondary;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // Master-Detail Layout when incidents exist
+        if incidents.length > 0: HorizontalLayout {
+            spacing: 16px;
+
+            // Columna Izquierda: Lista de Incidentes (Master)
+            Rectangle {
+                width: 380px;
+                background: Theme.card-bg;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                ListView {
+                    for inc[index] in incidents: Rectangle {
+                        height: 84px;
+                        background: selected-id == inc.id ? #00f0ff14 : (touch.has-hover ? #ffffff06 : transparent);
+                        border-radius: 8px;
+
+                        animate background { duration: 150ms; }
+
+                        touch := TouchArea {
+                            clicked => {
+                                selected-id = inc.id;
+                                selected-incident = inc;
+                            }
+                        }
+
+                        VerticalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            padding-top: 10px;
+                            padding-bottom: 10px;
+                            spacing: 6px;
+
+                            // Badges fila superior: Severidad, Estado, Timestamp
+                            HorizontalLayout {
+                                spacing: 8px;
+
+                                // Severidad
+                                Rectangle {
+                                    height: 18px;
+                                    border-radius: 4px;
+                                    background: inc.severity == "critical" ? #ff4d6d22 : (inc.severity == "high" ? #ff8c0022 : (inc.severity == "medium" ? #a855f722 : #00f0ff18));
+                                    border-width: 1px;
+                                    border-color: inc.severity == "critical" ? Theme.danger : (inc.severity == "high" ? Theme.neon-orange : (inc.severity == "medium" ? Theme.neon-purple : Theme.neon-cyan));
+
+                                    HorizontalLayout {
+                                        padding-left: 6px;
+                                        padding-right: 6px;
+                                        Text {
+                                            text: inc.severity == "critical" ? "CRÍTICO" : (inc.severity == "high" ? "ALTO" : (inc.severity == "medium" ? "MEDIO" : "INFO"));
+                                            font-size: 9px;
+                                            font-weight: 700;
+                                            color: inc.severity == "critical" ? Theme.danger : (inc.severity == "high" ? Theme.neon-orange : (inc.severity == "medium" ? Theme.neon-purple : Theme.neon-cyan));
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                // Estado
+                                Rectangle {
+                                    height: 18px;
+                                    border-radius: 4px;
+                                    background: inc.status == "active" ? #ff4d6d15 : #00ff9d15;
+
+                                    HorizontalLayout {
+                                        padding-left: 6px;
+                                        padding-right: 6px;
+                                        Text {
+                                            text: inc.status == "active" ? "ACTIVO" : "RESUELTO";
+                                            font-size: 9px;
+                                            font-weight: 700;
+                                            color: inc.status == "active" ? Theme.danger : Theme.neon-green;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                Rectangle { }
+
+                                Text {
+                                    text: inc.timestamp;
+                                    font-size: 10px;
+                                    color: Theme.text-tertiary;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            // Título
+                            Text {
+                                text: inc.title;
+                                font-size: 13px;
+                                font-weight: 600;
+                                color: Theme.text-primary;
+                                overflow: elide;
+                            }
+
+                            // Categoría y evidencias
+                            HorizontalLayout {
+                                Text {
+                                    text: inc.category;
+                                    font-size: 11px;
+                                    color: Theme.text-secondary;
+                                }
+
+                                Rectangle { }
+
+                                Text {
+                                    text: inc.evidence-count + " evidencias";
+                                    font-size: 11px;
+                                    color: Theme.neon-cyan;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Columna Derecha: Detalle del Incidente Seleccionado (Detail)
+            Rectangle {
+                background: Theme.card-bg;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                if selected-id < 0: VerticalLayout {
+                    alignment: center;
+                    spacing: 10px;
+
+                    Text {
+                        text: "\u{2318}";
+                        font-size: 28px;
+                        color: Theme.text-tertiary;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Selecciona un incidente de la lista para ver su análisis";
+                        font-size: 13px;
+                        font-weight: 500;
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                    }
+                }
+
+                if selected-id >= 0: ScrollView {
+                    VerticalLayout {
+                        padding-left: 24px;
+                        padding-right: 24px;
+                        padding-top: 20px;
+                        padding-bottom: 20px;
+                        spacing: 16px;
+
+                        // Cabecera del Incidente
+                        VerticalLayout {
+                            spacing: 8px;
+
+                            Text {
+                                text: selected-incident.title;
+                                font-size: 18px;
+                                font-weight: 700;
+                                color: Theme.text-primary;
+                                wrap: word-wrap;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 16px;
+
+                                Text {
+                                    text: "Categoría: " + selected-incident.category;
+                                    font-size: 12px;
+                                    color: Theme.text-secondary;
+                                }
+
+                                Text {
+                                    text: "Puntuación de Riesgo: " + selected-incident.risk-score + "/100";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: selected-incident.risk-score > 70 ? Theme.danger : (selected-incident.risk-score > 40 ? Theme.neon-orange : Theme.neon-green);
+                                }
+
+                                Text {
+                                    text: "Confianza: " + Math.round(selected-incident.confidence * 100) + "%";
+                                    font-size: 12px;
+                                    color: Theme.neon-cyan;
+                                }
+                            }
+                        }
+
+                        // Modo Simple
+                        if !is-advanced-view: VerticalLayout {
+                            spacing: 14px;
+
+                            // Tarjeta Resumen
+                            Rectangle {
+                                background: Theme.surface;
+                                border-radius: 10px;
+
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 6px;
+                                    Text {
+                                        text: "Diagnóstico Explicable:";
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        color: Theme.neon-cyan;
+                                    }
+                                    Text {
+                                        text: selected-incident.simple-summary;
+                                        font-size: 13px;
+                                        color: Theme.text-primary;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // Tarjeta Recomendación Práctica
+                            Rectangle {
+                                background: Theme.surface;
+                                border-radius: 10px;
+
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 6px;
+                                    Text {
+                                        text: "Recomendaciones Sugeridas:";
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        color: Theme.neon-green;
+                                    }
+                                    Text {
+                                        text: selected-incident.simple-recommendation;
+                                        font-size: 13px;
+                                        color: Theme.text-primary;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Modo Avanzado (Forense)
+                        if is-advanced-view: VerticalLayout {
+                            spacing: 14px;
+
+                            // Contexto Técnico y Regla
+                            Rectangle {
+                                background: Theme.surface;
+                                border-radius: 10px;
+
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        Text {
+                                            text: "Regla Heurística:";
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                            color: Theme.neon-purple;
+                                            width: 140px;
+                                        }
+                                        Text {
+                                            text: selected-incident.technical-rule-id;
+                                            font-size: 12px;
+                                            font-weight: 600;
+                                            color: Theme.neon-cyan;
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        Text {
+                                            text: "Impacto Técnico:";
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                            color: Theme.text-secondary;
+                                            width: 140px;
+                                        }
+                                        Text {
+                                            text: selected-incident.technical-impact != "" ? selected-incident.technical-impact : "Evaluación estándar de rendimiento";
+                                            font-size: 12px;
+                                            color: Theme.text-primary;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        Text {
+                                            text: "Mitigación Técnica:";
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                            color: Theme.text-secondary;
+                                            width: 140px;
+                                        }
+                                        Text {
+                                            text: selected-incident.technical-mitigation != "" ? selected-incident.technical-mitigation : "Verificar telemetría de subsistema";
+                                            font-size: 12px;
+                                            color: Theme.text-primary;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        Text {
+                                            text: "Limitaciones:";
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                            color: Theme.text-tertiary;
+                                            width: 140px;
+                                        }
+                                        Text {
+                                            text: selected-incident.diagnostic-limitations != "" ? selected-incident.diagnostic-limitations : "Diagnóstico basado en telemetría observable offline";
+                                            font-size: 11px;
+                                            color: Theme.text-secondary;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Lista de Evidencias Observables
+                            Rectangle {
+                                background: Theme.surface;
+                                border-radius: 10px;
+
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 10px;
+
+                                    Text {
+                                        text: "Evidencias Observables (" + selected-incident.evidence-count + "):";
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        color: Theme.neon-cyan;
+                                    }
+
+                                    if selected-incident.evidence-count == 0: Text {
+                                        text: "No hay registros de evidencias adicionales asociados a este incidente.";
+                                        font-size: 11px;
+                                        color: Theme.text-tertiary;
+                                    }
+
+                                    for ev in selected-incident.evidences: Rectangle {
+                                        background: #00000025;
+                                        border-radius: 6px;
+
+                                        VerticalLayout {
+                                            padding: 8px;
+                                            spacing: 4px;
+
+                                            HorizontalLayout {
+                                                Text {
+                                                    text: ev.timestamp;
+                                                    font-size: 10px;
+                                                    color: Theme.text-tertiary;
+                                                }
+                                                Rectangle { }
+                                                Text {
+                                                    text: ev.source-module + " :: " + ev.event-type;
+                                                    font-size: 10px;
+                                                    font-weight: 600;
+                                                    color: Theme.neon-purple;
+                                                }
+                                            }
+
+                                            Text {
+                                                text: ev.observable-json;
+                                                font-size: 11px;
+                                                color: Theme.text-secondary;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ── AppWindow (LA UNICA exportada, hereda Window) ─
 
 export component AppWindow inherits Window {
@@ -2499,6 +3056,19 @@ export component AppWindow inherits Window {
     callback refresh-wifi();
     callback refresh-link-quality();
     callback refresh-net-connections();
+
+    // ── Pulse Intelligence Engine (PIE) Incidents properties ──
+    in property <[PieIncidentData]> pie-incidents: [];
+    in-out property <int> pie-selected-incident-id: -1;
+    in-out property <int> pie-filter-status: 0;
+    in-out property <bool> pie-is-advanced-view: false;
+    in property <bool> pie-is-loading: false;
+    in property <string> pie-error-message: "";
+
+    callback refresh-pie-incidents();
+    callback pie-filter-changed(int);
+    callback export-pie-forensic-json();
+    callback export-pie-forensic-csv();
 
     HorizontalLayout {
         // ── Sidebar ──
@@ -2613,6 +3183,13 @@ export component AppWindow inherits Window {
                     icon: "\u{29BF}";
                     active: root.current-tab == 5;
                     clicked => { root.current-tab = 5; root.tab-changed(5); }
+                }
+
+                SidebarButton {
+                    label: "Incident Center";
+                    icon: "\u{26A0}";
+                    active: root.current-tab == 6;
+                    clicked => { root.current-tab = 6; root.tab-changed(6); }
                 }
 
                 Rectangle { height: 8px; }
@@ -2786,6 +3363,19 @@ export component AppWindow inherits Window {
                 refresh-wifi => { root.refresh-wifi(); }
                 refresh-link => { root.refresh-link-quality(); }
                 refresh-connections => { root.refresh-net-connections(); }
+            }
+
+            if root.current-tab == 6: PieIncidentsTab {
+                incidents: root.pie-incidents;
+                selected-id <=> root.pie-selected-incident-id;
+                filter-status <=> root.pie-filter-status;
+                is-advanced-view <=> root.pie-is-advanced-view;
+                is-loading: root.pie-is-loading;
+                error-message: root.pie-error-message;
+                refresh => { root.refresh-pie-incidents(); }
+                filter-changed(status) => { root.pie-filter-changed(status); }
+                export-json => { root.export-pie-forensic-json(); }
+                export-csv => { root.export-pie-forensic-csv(); }
             }
         }
     }

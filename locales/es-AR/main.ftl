@@ -100,6 +100,11 @@ monitor-top-ram = Top 5 por Memoria
 
 # Network Guardian
 tab-network-guardian = Network Guardian
+net-guardian-title = Network Guardian
+net-guardian-description = Auditoría de red local, diagnóstico de canales Wi-Fi y calidad de enlace en tiempo real.
+net-tab-devices = Dispositivos
+net-tab-wifi = Wi-Fi Analyzer
+net-tab-link = Calidad de Enlace
 net-device-this-pc = Tu equipo
 net-device-gateway = Router / Puerta de Enlace
 net-device-vendor = Dispositivo { $vendor }
@@ -109,9 +114,22 @@ net-device-trusted = Confiable
 net-device-untrusted = Desconocido
 net-scan-running = Escaneando red...
 net-scan-partial = Escaneo parcial acotado a { $count } hosts
+net-devices-empty = No se encontraron dispositivos en la caché de red local. Pulsa Actualizar para consultar la tabla ARP.
+net-wifi-unavailable = Adaptador Wi-Fi desconectado o no disponible (conexión cableada activa).
+net-link-gateway = Latencia Gateway
+net-link-internet = Latencia Internet
+net-link-jitter = Jitter
+net-link-loss = Pérdida de Paquetes
 
 # Pulse Intelligence Engine (PIE)
+tab-pie-incidents = Centro de Incidentes
 pie-title = Centro de Inteligencia y Diagnósticos
+pie-description = Diagnósticos correlacionados de seguridad y rendimiento entre sistema, red y procesos.
+pie-incidents-empty = No se registran incidentes. Todos los subsistemas operan dentro de parámetros normales.
+pie-evidences-title = Evidencias Observables
+pie-filter-all = Todos
+pie-filter-active = Activos
+pie-filter-resolved = Resueltos
 pie-rule-wifi-deg-title = Señal Wi-Fi inestable o muy débil
 pie-rule-ext-down-title = Conexión local activa pero sin acceso a Internet
 pie-rule-rogue-gw-title = Cambio inesperado en la configuración de tu conexión

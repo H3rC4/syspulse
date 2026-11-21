@@ -186,9 +186,9 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 1. Leer directamente este archivo (`planes/ESTADO_ACTUAL.md`), [AGENTS.md](file:///D:/proyectos/SysPulse/AGENTS.md) y [planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md).
 2. **Rama activa:** Mantenerse en `review/a11-block-2b` (o la rama indicada por el usuario).
-3. **Próxima tarea a autorizar:** **Fase 5: Subtarea 5.3** (Centro de Incidentes de PIE en Slint) y **Subtarea 5.4** (Controladores Asíncronos en main.rs e i18n Fluent).
-4. **Subtareas completadas:** Subtarea 5.1 (`SocketCorrelator`, SHA `a848b15`) y Subtarea 5.2 (`NetworkGuardianTab` en Slint) con 109 tests unitarios pasando.
-5. No modificar código sin autorización previa ni realizar commit/push de la Subtarea 5.2.
+3. **Próxima tarea a autorizar:** **Fase 5: Subtarea 5.4** (Controladores Asíncronos en main.rs e integración i18n Fluent).
+4. **Subtareas completadas:** Subtarea 5.1 (`SocketCorrelator`, SHA `a848b15`), Subtarea 5.2 (`NetworkGuardianTab` en Slint, SHA `09134f6`) y Subtarea 5.3 (`PieIncidentsTab` en Slint, implementada sin commit) con 109 tests unitarios pasando.
+5. No realizar commit ni push de la Subtarea 5.3 sin autorización previa del usuario.
 
 ---
 
