@@ -53,6 +53,14 @@ const QUARANTINE_STAGING_SUFFIX: &str = ".syspulse-staging";
 const RESTORE_STAGING_PREFIX: &str = ".syspulse-restore-";
 const FILE_ATTRIBUTE_REPARSE_POINT_FLAG: u32 = 0x400;
 
+/// Maximum number of entries in a legacy v1 quarantine manifest eligible for automatic migration at startup.
+/// Legacy manifests exceeding this limit skip automatic migration to avoid blocking startup and enter
+/// degraded quarantine mode to preserve all existing data and backups fail-closed.
+pub const MAX_MIGRATABLE_V1_ENTRIES: usize = 1000;
+
+/// Maximum byte size of a legacy v1 quarantine manifest eligible for automatic migration at startup (1 MiB).
+pub const MAX_MIGRATABLE_V1_BYTES: usize = 1024 * 1024;
+
 #[cfg(test)]
 mod fault_injection {
     use std::cell::{Cell, RefCell};
@@ -632,8 +640,39 @@ impl QuarantineManifestV2 {
             return Ok(manifest_v2);
         }
 
+        if content.len() > MAX_MIGRATABLE_V1_BYTES {
+            tracing::warn!(
+                "Legacy v1 quarantine manifest at {:?} is oversized ({} bytes; limit: {} bytes). Automatic migration skipped to prevent startup hang; entering degraded quarantine mode.",
+                path,
+                content.len(),
+                MAX_MIGRATABLE_V1_BYTES
+            );
+            anyhow::bail!(
+                "Legacy v1 quarantine manifest at {:?} is oversized ({} bytes; limit: {} bytes). Automatic migration skipped to prevent startup hang; quarantine entered degraded mode.",
+                path,
+                content.len(),
+                MAX_MIGRATABLE_V1_BYTES
+            );
+        }
+
         let manifest_v1: QuarantineManifestV1 = serde_json::from_str(&content)
             .with_context(|| format!("Quarantine manifest at {:?} is corrupt or unparseable", path))?;
+
+        if manifest_v1.entries.len() > MAX_MIGRATABLE_V1_ENTRIES {
+            tracing::warn!(
+                "Legacy v1 quarantine manifest at {:?} contains too many entries ({} entries; limit: {} entries). Automatic migration skipped to prevent startup hang; entering degraded quarantine mode.",
+                path,
+                manifest_v1.entries.len(),
+                MAX_MIGRATABLE_V1_ENTRIES
+            );
+            anyhow::bail!(
+                "Legacy v1 quarantine manifest at {:?} contains too many entries ({} entries; limit: {} entries). Automatic migration skipped to prevent startup hang; quarantine entered degraded mode.",
+                path,
+                manifest_v1.entries.len(),
+                MAX_MIGRATABLE_V1_ENTRIES
+            );
+        }
+
         tracing::info!("Detected v1 quarantine manifest at {:?}. Starting non-destructive migration...", path);
         let backup_path = parent.join("manifest.v1.bak");
         Self::preserve_v1_backup(path, &backup_path)?;
@@ -1872,6 +1911,18 @@ impl Cleaner {
         })
     }
 
+    /// Returns true if quarantine is currently in degraded mode (e.g. oversized v1 manifest, missing lock, or corrupt state).
+    #[allow(dead_code)]
+    pub fn is_quarantine_degraded(&self) -> bool {
+        self.quarantine_degraded_reason.lock().unwrap().is_some()
+    }
+
+    /// Returns the reason why quarantine operations are degraded, if any.
+    #[allow(dead_code)]
+    pub fn quarantine_degraded_reason(&self) -> Option<String> {
+        self.quarantine_degraded_reason.lock().unwrap().clone()
+    }
+
     fn prepare_locked(&self) -> Result<(QuarantineProcessLock, MutexGuard<'_, QuarantineManifestV2>)> {
         if let Some(reason) = self.quarantine_degraded_reason.lock().unwrap().as_ref() {
             anyhow::bail!("Quarantine is degraded/disabled: {}", reason);
@@ -2690,6 +2741,9 @@ impl Cleaner {
     ///   but automatic purge remains disabled until explicit authorization.
     pub fn purge_old_quarantine(&self, days: u32) -> Result<usize> {
         let _ = days;
+        if let Some(reason) = self.quarantine_degraded_reason.lock().unwrap().as_ref() {
+            anyhow::bail!("Quarantine is degraded/disabled: {}", reason);
+        }
         tracing::warn!(
             "Quarantine automatic purge is temporarily suspended due to security audit A11.09 (preventing automated data loss). Existing quarantine files and manifest are preserved intact."
         );
@@ -4250,5 +4304,98 @@ mod tests {
         assert_eq!(purged, 0, "Auto-purge must remain contained/disabled (0 files purged)");
         let remaining_after = cleaner.list_quarantine().unwrap();
         assert_eq!(remaining_after.len(), 1, "Quarantined file must not be purged");
+    }
+
+    #[test]
+    fn test_oversized_v1_manifest_entries_skips_migration_and_degrades_safely() {
+        let test_dir = TestQuarantineDir::new("oversized_v1_entries");
+        let manifest_file = test_dir.path.join("manifest.json");
+        let backup_file = test_dir.path.join("manifest.v1.bak");
+
+        // Write a pre-existing manifest.v1.bak
+        let preexisting_bak = "PREEXISTING_V1_BACKUP_CONTENT";
+        std::fs::write(&backup_file, preexisting_bak).unwrap();
+
+        // Generate v1 manifest with 1050 entries (> MAX_MIGRATABLE_V1_ENTRIES)
+        let mut entries_json = String::from("{\n  \"entries\": {\n");
+        for i in 0..1050 {
+            if i > 0 {
+                entries_json.push_str(",\n");
+            }
+            entries_json.push_str(&format!(
+                "    \"file_{:04}.txt\": \"C:\\\\Users\\\\Test\\\\Documents\\\\file_{:04}.txt\"",
+                i, i
+            ));
+        }
+        entries_json.push_str("\n  }\n}");
+        std::fs::write(&manifest_file, &entries_json).unwrap();
+
+        // Cleaner initialization must succeed without blocking or failing
+        let cleaner = Cleaner::new_with_dir(test_dir.path.clone())
+            .expect("Cleaner startup must succeed even with oversized v1 manifest");
+
+        // Must enter degraded quarantine mode
+        assert!(cleaner.is_quarantine_degraded(), "Quarantine must be in degraded mode");
+        let reason = cleaner.quarantine_degraded_reason().expect("Degraded reason must be present");
+        assert!(reason.contains("too many entries"), "Reason must mention too many entries: {}", reason);
+
+        // Quarantine operations must fail closed
+        assert!(cleaner.list_quarantine().is_err(), "list_quarantine must fail closed when degraded");
+        assert!(cleaner.purge_old_quarantine(30).is_err(), "purge_old_quarantine must fail closed when degraded");
+
+        // Existing backup and manifest data must be 100% preserved
+        let bak_after = std::fs::read_to_string(&backup_file).unwrap();
+        assert_eq!(bak_after, preexisting_bak, "manifest.v1.bak must not be modified or overwritten");
+
+        let manifest_after = std::fs::read_to_string(&manifest_file).unwrap();
+        assert_eq!(manifest_after, entries_json, "manifest.json must not be modified or converted");
+        assert!(!manifest_after.contains("\"version\": 2"), "manifest must not have been migrated to v2");
+
+        // Non-quarantine functions must remain operational
+        assert!(!Cleaner::default_temp_paths().is_empty(), "Temp scanning paths must remain available");
+    }
+
+    #[test]
+    fn test_oversized_v1_manifest_bytes_skips_migration_and_degrades_safely() {
+        let test_dir = TestQuarantineDir::new("oversized_v1_bytes");
+        let manifest_file = test_dir.path.join("manifest.json");
+        let backup_file = test_dir.path.join("manifest.v1.bak");
+
+        let preexisting_bak = "EXISTING_BACKUP_BYTES_TEST";
+        std::fs::write(&backup_file, preexisting_bak).unwrap();
+
+        // Create a payload > 1 MiB (MAX_MIGRATABLE_V1_BYTES)
+        let mut entries_json = String::from("{\n  \"entries\": {\n");
+        // Each entry is ~135 bytes, so 12000 entries is ~1.6 MiB
+        for i in 0..12000 {
+            if i > 0 {
+                entries_json.push_str(",\n");
+            }
+            entries_json.push_str(&format!(
+                "    \"large_file_key_{:05}.dat\": \"D:\\\\Extremely\\\\Long\\\\Directory\\\\Path\\\\For\\\\Testing\\\\Oversized\\\\Bytes\\\\File_{:05}.dat\"",
+                i, i
+            ));
+        }
+        entries_json.push_str("\n  }\n}");
+        assert!(entries_json.len() > MAX_MIGRATABLE_V1_BYTES, "Test payload must exceed 1 MiB limit");
+        std::fs::write(&manifest_file, &entries_json).unwrap();
+
+        // Cleaner initialization must succeed without blocking
+        let cleaner = Cleaner::new_with_dir(test_dir.path.clone())
+            .expect("Cleaner startup must succeed even with oversized byte manifest");
+
+        assert!(cleaner.is_quarantine_degraded(), "Quarantine must be in degraded mode");
+        let reason = cleaner.quarantine_degraded_reason().expect("Degraded reason must be present");
+        assert!(reason.contains("oversized"), "Reason must mention oversized bytes: {}", reason);
+
+        // Quarantine operations must fail closed
+        assert!(cleaner.list_quarantine().is_err(), "list_quarantine must fail closed when degraded");
+
+        // Backups and files must remain untouched
+        let bak_after = std::fs::read_to_string(&backup_file).unwrap();
+        assert_eq!(bak_after, preexisting_bak, "manifest.v1.bak must remain untouched");
+
+        let manifest_after = std::fs::read_to_string(&manifest_file).unwrap();
+        assert_eq!(manifest_after, entries_json, "manifest.json must remain untouched");
     }
 }

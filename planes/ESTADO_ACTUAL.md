@@ -1,7 +1,7 @@
 # SysPulse — Documento Permanente de Estado y Continuidad de Contexto
 
 **Ubicación:** `planes/ESTADO_ACTUAL.md`  
-**Última actualización:** 21 de noviembre de 2026 (Fase 5 completada: Subtarea 5.1 SocketCorrelator [SHA `a848b15`]; Subtarea 5.2 NetworkGuardianTab Slint [SHA `09134f6`]; Subtarea 5.3 PieIncidentsTab Slint [SHA `8a7b504`]; Subtarea 5.4 Controladores asíncronos en main.rs e i18n implementados; 109 tests unitarios pasando; Fase 5 concluida)
+**Última actualización:** 21 de noviembre de 2026 (Fix Prioridad P0: Prevención fail-closed de bloqueo de inicio por manifiesto v1 de cuarentena sobredimensionado; 113 tests unitarios pasando; compilación limpia)
 **Rama activa:** `review/a11-block-2b` (en desarrollo sobre base `develop/v0.4.0`)
 **Versión de producción:** v0.3.1 (Setup oficial generado: `output/SysPulse-Setup-0.3.1.exe`)  
 **Versión en desarrollo:** v0.4.0 (PIE Core & Network Guardian)  
@@ -19,7 +19,7 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 | Componente | Estado | Notas Técnicas |
 |---|---|---|
-| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (109 tests unitarios pasando). |
+| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (113 tests unitarios pasando). |
 | **System Monitor** | ✅ Completado | Desacoplado asíncronamente con Tokio (60+ FPS fluidos en Slint). Emisión de telemetría a PIE (`CpuLoad`, `MemoryPressure`, `NetworkThroughput`, `ThermalAlert`). |
 | **Smart Cleaner** | ✅ Bloques 1 a 5 completados; purga suspendida (A11.09) y cross-volume destructivo deshabilitado (A11.10) | Manifiesto v2 atómico, bloqueo entre procesos (`QuarantineProcessLock`), transacciones con staging, SHA-256, no-replace, recuperación `Staged`/`Restoring`, preservación ADS/atributos NTFS, validación de rutas/reparse, backup v1 protegido, fail-closed en duplicados y control names (R01–R03, R05, R07). Bloque 3 ejecutado: validación estricta de rutas y componentes transversales (`validate_clean_path`, A11.01), directorios protegidos (`is_protected_path`, A11.02), rechazo de reparse points y enlaces duros (`ensure_not_hard_link`, A11.03), mitigación TOCTOU en duplicados mediante verificación atómica por handle de tamaño y SHA-256 (`quarantine_file_with_expected`, A11.04 OBLIGATORIO), verificación y retención de descriptor protegido de copia retenida inalterada (`open_protected_read` y anti-colisión de identidad, A11.05), y rechazo obligatorio en backend ante selección de todas las copias de un grupo (A11.06). Bloque 4 ejecutado: diálogos de confirmación previa con conteo y bytes (`rfd::MessageDialog`, A11.13), reporte visual de errores en UI y logs (`set_cleaner_status`, A11.14), apertura segura de archivos mediante acción "Reveal" en explorador en vez de ejecución directa (A11.15), identificación unívoca por clave estable en operaciones de restauración y borrado (`entry.key`, R06), caché de tamaños escaneados y `raw-size` (R08), blindaje de directorios reales de SysPulse (`app_data_dir`, `db_path`, `logs_dir`, `settings_path`, R09) y desactivación segura de borrado permanente directo ruteando a papelera (R10). Bloque 5 ejecutado: validación integral de ciclo de vida con archivos temporales descartables (`test_b5_final_validation_lifecycle`, A11.16). A11.10 y R04 permanecen contenidos temporalmente (cross-volume destructivo deshabilitado). Semántica de Papelera en `delete_quarantine_permanently` preservada. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). 47 pruebas de cleaner/cuarentena (92 totales en workspace). |
 | **CPU Focus** | ✅ Completado | Prioridad `ABOVE_NORMAL_PRIORITY_CLASS` (Win32) y memoria en MB reales. |
@@ -200,13 +200,20 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 1. Leer directamente este archivo (`planes/ESTADO_ACTUAL.md`), [AGENTS.md](file:///D:/proyectos/SysPulse/AGENTS.md) y [planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md).
 2. **Rama activa:** Mantenerse en `review/a11-block-2b` (o la rama indicada por el usuario).
-3. **Estado de Fase 5:** **Fase 5 Completada al 100%** (Subtareas 5.1 a 5.4 implementadas y probadas con 109 tests unitarios pasando, 0 errores de compilación y 0 errores de clippy).
-4. **Subtareas completadas:**
-   - Subtarea 5.1 (`SocketCorrelator`, SHA `a848b15`).
-   - Subtarea 5.2 (`NetworkGuardianTab` en Slint, SHA `09134f6`).
-   - Subtarea 5.3 (`PieIncidentsTab` en Slint, SHA `8a7b504`).
-   - Subtarea 5.4 (Controladores asíncronos en `src/main.rs`, adaptadores Slint e i18n Fluent, implementada sin commit).
-5. **Próxima acción a autorizar por el usuario:** Autorización para realizar `git commit` de la Subtarea 5.4, o proceder a la siguiente fase priorizada según [PLAN_DE_ACCION.md](file:///D:/proyectos/SysPulse/planes/PLAN_DE_ACCION.md) (Prioridad 6: ETW en Windows / Prioridad 7: Features v0.4.0+ / Pruebas de campo con UI Slint).
+3. **Estado del proyecto:** **113 tests unitarios pasando** (0 fallos, 0 errores en `cargo check`).
+4. **Fix P0 Implementado (Smart Cleaner / Startup Blocker):**
+   - Detección de manifiestos v1 sobredimensionados (`MAX_MIGRATABLE_V1_ENTRIES = 1000`, `MAX_MIGRATABLE_V1_BYTES = 1024 * 1024`).
+   - Omisión de la migración automática y transición a modo degradado en < 1 ms para evitar el bloqueo del hilo principal de Slint.
+   - Preservación íntegra de `manifest.json`, `manifest.v1.bak` y los archivos físicos en cuarentena.
+   - Operaciones de cuarentena deshabilitadas fail-closed en modo degradado; resto de módulos 100% operativos.
+   - 2 pruebas de regresión añadidas (`test_oversized_v1_manifest_entries_skips_migration_and_degrades_safely`, `test_oversized_v1_manifest_bytes_skips_migration_and_degrades_safely`).
+5. **Próximas acciones a autorizar por el usuario:**
+   - **Opción 1 (Resolución de Hallazgos Residuales Auditados):** Subsanar los 3 hallazgos residuales contrastados de la auditoría externa v0.4.0:
+     - **A02:** Desacoplar la emisión de telemetría de `SysMonitor` respecto a la pestaña activa (actualmente dentro de `if ui.get_current_tab() == 0`, lo que silencia a PIE en reposo o minimizado en bandeja).
+     - **A04:** Filtrar la tabla ARP del kernel en `read_arp_table_native` por la subred/interfaz activa para ignorar adaptadores virtuales ajenos.
+     - **A12:** Transacción conjunta SQLite (`tx.transaction()`) al persistir incidente y sus evidencias observables en `persist_incident`.
+   - **Opción 2 (Prioridad 6 del Plan de Acción):** Migración de Process Hunter a ETW en Windows para eliminar el bucle de polling de `sysinfo`.
+   - **Opción 3 (Integración y Pruebas):** Merge de `review/a11-block-2b` hacia `develop/v0.4.0` y ejecución de pruebas manuales con la UI Slint.
 6. No realizar commit ni push sin autorización explícita previa del usuario (Directiva Permanente 10).
 
 ---
