@@ -7,6 +7,7 @@ pub mod models;
 pub mod oui;
 pub mod ping;
 pub mod scanner;
+pub mod socket_correlator;
 pub mod wifi;
 pub mod wifi_models;
 
@@ -21,6 +22,7 @@ pub use models::{
 pub use oui::lookup_vendor;
 pub use ping::PingMonitor;
 pub use scanner::DeviceScanner;
+pub use socket_correlator::{CorrelatedSocket, SocketCorrelator, SocketProtocol, TcpState};
 pub use wifi::WifiAnalyzer;
 pub use wifi_models::*;
 
