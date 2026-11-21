@@ -386,6 +386,31 @@ impl PulseIntelligenceEngine {
 
         // 1. Manejo específico según el tipo de evento crítico
         match &envelope.event {
+            PulseCriticalEvent::DeviceObserved {
+                network_id,
+                mac,
+                ip,
+                hostname,
+                vendor,
+                is_trusted,
+            } => {
+                // Persistencia silenciosa de línea base sin emitir alertas (reglas 3 y 4 omitidas)
+                let dev = PersistedNetDevice {
+                    network_id: network_id.clone(),
+                    mac: mac.clone(),
+                    ip: ip.clone(),
+                    hostname: hostname.clone(),
+                    vendor: vendor.clone(),
+                    is_trusted: *is_trusted,
+                    custom_alias: None,
+                    first_seen: envelope.timestamp_utc,
+                    last_seen: envelope.timestamp_utc,
+                };
+                if let Err(e) = self.upsert_net_device(&dev).await {
+                    tracing::warn!(target: "pie::engine", "Error persistiendo dispositivo {} en {}: {}", mac, network_id, e);
+                }
+            }
+
             PulseCriticalEvent::NewDeviceDiscovered {
                 network_id,
                 mac,

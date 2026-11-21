@@ -10,9 +10,9 @@ use modules::cpu_optimizer::CpuOptimizer;
 use modules::i18n;
 use modules::network_guardian::socket_correlator::SocketCorrelator;
 use modules::network_guardian::ui_adapter::{
-    map_correlated_socket, map_health_diagnostics, map_wifi_report, query_persisted_incidents,
-    query_persisted_net_devices, UiLinkQuality, UiNetDevice, UiPieEvidence, UiPieIncident,
-    UiSocketConnection, UiWifiChannel, UiWifiInfo, UiWifiNearby,
+    map_correlated_socket, map_health_diagnostics, map_wifi_report, persist_discovered_devices,
+    query_persisted_incidents, query_persisted_net_devices, UiLinkQuality, UiNetDevice,
+    UiPieEvidence, UiPieIncident, UiSocketConnection, UiWifiChannel, UiWifiInfo, UiWifiNearby,
 };
 use modules::network_guardian::NetworkGuardian;
 use modules::pie::exporter::{ForensicExportFormat, ForensicExporter};
@@ -902,9 +902,20 @@ async fn main() -> Result<()> {
             let ui_weak = ui_weak.clone();
             let ng = ng_tab_clone.clone();
             tokio::spawn(async move {
-                {
+                let scan_res = {
                     let mut guard = ng.lock().await;
-                    let _ = guard.run_device_scan(false).await;
+                    guard.run_device_scan(false).await
+                };
+                if let Ok(report) = scan_res {
+                    let network_id = report.advanced.network_context.network_id;
+                    let devices = report.advanced.devices;
+                    if let Ok(db_path) = Settings::db_path() {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let conn = rusqlite::Connection::open(&db_path)?;
+                            persist_discovered_devices(&conn, &network_id, &devices)
+                        })
+                        .await;
+                    }
                 }
                 load_net_devices(ui_weak.clone()).await;
                 let link_res = {
@@ -921,10 +932,15 @@ async fn main() -> Result<()> {
                 }
             });
         } else if tab_index == 6 {
-            // PIE Incident Center tab: auto-load incidents
+            // PIE Incident Center tab: auto-load incidents preserving current filter
             let ui_weak = ui_weak.clone();
+            let filter = if let Some(ui) = ui_weak.upgrade() {
+                ui.get_pie_filter_status()
+            } else {
+                0
+            };
             tokio::spawn(async move {
-                load_pie_incidents(ui_weak, 0).await;
+                load_pie_incidents(ui_weak, filter).await;
             });
         }
     });
@@ -1423,10 +1439,21 @@ async fn main() -> Result<()> {
             ui.set_net_is_scanning(true);
         }
         tokio::spawn(async move {
-            let _ = {
+            let scan_res = {
                 let mut guard = ng.lock().await;
                 guard.run_device_scan(false).await
             };
+            if let Ok(report) = scan_res {
+                let network_id = report.advanced.network_context.network_id;
+                let devices = report.advanced.devices;
+                if let Ok(db_path) = Settings::db_path() {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let conn = rusqlite::Connection::open(&db_path)?;
+                        persist_discovered_devices(&conn, &network_id, &devices)
+                    })
+                    .await;
+                }
+            }
             load_net_devices(ui_weak.clone()).await;
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
@@ -1453,6 +1480,15 @@ async fn main() -> Result<()> {
             match scan_res {
                 Ok(report) => {
                     tracing::info!("Network device scan completed: {} devices found", report.advanced.devices.len());
+                    let network_id = report.advanced.network_context.network_id;
+                    let devices = report.advanced.devices;
+                    if let Ok(db_path) = Settings::db_path() {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let conn = rusqlite::Connection::open(&db_path)?;
+                            persist_discovered_devices(&conn, &network_id, &devices)
+                        })
+                        .await;
+                    }
                     load_net_devices(ui_weak.clone()).await;
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_weak.upgrade() {
@@ -1972,7 +2008,11 @@ async fn load_net_devices(ui_weak: slint::Weak<AppWindow>) {
     }
 }
 
+static PIE_LOAD_REQUEST_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 async fn load_pie_incidents(ui_weak: slint::Weak<AppWindow>, filter_status: i32) {
+    let req_seq = PIE_LOAD_REQUEST_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+
     let db_path = match Settings::db_path() {
         Ok(p) => p,
         Err(e) => {
@@ -1997,10 +2037,20 @@ async fn load_pie_incidents(ui_weak: slint::Weak<AppWindow>, filter_status: i32)
         Ok(Ok(incidents)) => {
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
-                    let slint_incidents: Vec<PieIncidentData> = incidents.iter().map(map_pie_incident_to_slint).collect();
-                    ui.set_pie_incidents(slint::ModelRc::new(slint::VecModel::from(slint_incidents)));
-                    ui.set_pie_is_loading(false);
-                    ui.set_pie_error_message("".into());
+                    if req_seq == PIE_LOAD_REQUEST_SEQ.load(std::sync::atomic::Ordering::SeqCst)
+                        && ui.get_pie_filter_status() == filter_status
+                    {
+                        let slint_incidents: Vec<PieIncidentData> = incidents.iter().map(map_pie_incident_to_slint).collect();
+                        ui.set_pie_incidents(slint::ModelRc::new(slint::VecModel::from(slint_incidents)));
+                        ui.set_pie_is_loading(false);
+                        ui.set_pie_error_message("".into());
+                    } else {
+                        tracing::debug!(
+                            "Discarding stale incidents query result (seq {}, filter {})",
+                            req_seq,
+                            filter_status
+                        );
+                    }
                 }
             });
         }
@@ -2009,8 +2059,10 @@ async fn load_pie_incidents(ui_weak: slint::Weak<AppWindow>, filter_status: i32)
             tracing::warn!("Failed to query persisted incidents: {}", err_msg);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_pie_is_loading(false);
-                    ui.set_pie_error_message(err_msg.into());
+                    if req_seq == PIE_LOAD_REQUEST_SEQ.load(std::sync::atomic::Ordering::SeqCst) {
+                        ui.set_pie_is_loading(false);
+                        ui.set_pie_error_message(err_msg.into());
+                    }
                 }
             });
         }
@@ -2018,7 +2070,9 @@ async fn load_pie_incidents(ui_weak: slint::Weak<AppWindow>, filter_status: i32)
             tracing::warn!("Task join error querying incidents: {}", e);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_pie_is_loading(false);
+                    if req_seq == PIE_LOAD_REQUEST_SEQ.load(std::sync::atomic::Ordering::SeqCst) {
+                        ui.set_pie_is_loading(false);
+                    }
                 }
             });
         }

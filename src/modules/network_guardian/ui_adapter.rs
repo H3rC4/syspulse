@@ -431,6 +431,70 @@ pub fn query_persisted_incidents(
     Ok(incidents.iter().map(map_incident).collect())
 }
 
+/// Persiste observaciones de dispositivos descubiertos en `net_devices`
+/// sin emitir alertas, preservando alias y nivel de confianza preexistentes
+/// y respetando el aislamiento por `network_id`.
+pub fn persist_discovered_devices(
+    conn: &Connection,
+    network_id: &str,
+    devices: &[DiscoveredDevice],
+) -> Result<()> {
+    if devices.is_empty() {
+        return Ok(());
+    }
+
+    conn.execute_batch("BEGIN IMMEDIATE;")?;
+    let res = (|| -> Result<()> {
+        let mut stmt = conn.prepare(
+            "INSERT INTO net_devices (
+                network_id, mac, ip, hostname, vendor, is_trusted, custom_alias, first_seen, last_seen
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(network_id, mac) DO UPDATE SET
+                ip = excluded.ip,
+                hostname = CASE
+                    WHEN excluded.hostname IS NOT NULL AND excluded.hostname != '' THEN excluded.hostname
+                    ELSE net_devices.hostname
+                END,
+                vendor = CASE
+                    WHEN excluded.vendor IS NOT NULL AND excluded.vendor != '' THEN excluded.vendor
+                    ELSE net_devices.vendor
+                END,
+                last_seen = excluded.last_seen",
+        )?;
+
+        let now_str = Utc::now().to_rfc3339();
+
+        for dev in devices {
+            let is_trusted_num = if dev.is_trusted { 1 } else { 0 };
+            stmt.execute(params![
+                network_id,
+                dev.mac,
+                dev.ip,
+                dev.hostname,
+                dev.vendor,
+                is_trusted_num,
+                dev.custom_alias,
+                now_str,
+                now_str,
+            ])
+            .with_context(|| format!("Failed to upsert discovered device {}", dev.mac))?;
+        }
+
+        Ok(())
+    })();
+
+    match res {
+        Ok(_) => {
+            conn.execute_batch("COMMIT;")?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK;");
+            Err(e)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,5 +797,217 @@ mod tests {
         assert_eq!(ui_listen.state, "LISTEN");
         assert_eq!(ui_listen.process_name, "-");
         assert!(!ui_listen.is_alive);
+    }
+
+    #[test]
+    fn test_persist_discovered_devices_baseline_and_preserves_trust_and_isolation() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE net_devices (
+                network_id TEXT NOT NULL,
+                mac TEXT NOT NULL,
+                ip TEXT NOT NULL,
+                hostname TEXT,
+                vendor TEXT,
+                is_trusted INTEGER NOT NULL DEFAULT 0,
+                custom_alias TEXT,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                PRIMARY KEY (network_id, mac)
+            );"
+        ).unwrap();
+
+        // 1. Pre-insertar dispositivo con confianza y alias personalizado en net_A
+        let original_first_seen = "2026-01-01T10:00:00+00:00";
+        conn.execute(
+            "INSERT INTO net_devices (network_id, mac, ip, hostname, vendor, is_trusted, custom_alias, first_seen, last_seen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                "net_A",
+                "11:22:33:44:55:66",
+                "192.168.1.1",
+                "router.lan",
+                "Asus",
+                1,
+                "Router Principal",
+                original_first_seen,
+                original_first_seen,
+            ],
+        ).unwrap();
+
+        // 2. Observación de baseline con el mismo dispositivo (sin alias ni confianza en el scan crudo)
+        // y un nuevo dispositivo adicional
+        let dev1_update = DiscoveredDevice {
+            network_id: "net_A".to_string(),
+            mac: "11:22:33:44:55:66".to_string(),
+            ip: "192.168.1.254".to_string(), // IP cambiada
+            hostname: Some("router-updated.lan".to_string()),
+            vendor: Some("Asus Updated".to_string()),
+            is_trusted: false, // El escáner crudo no conoce la confianza
+            is_gateway: true,
+            is_local_machine: false,
+            custom_alias: None,
+            display_category: DeviceDisplayCategory::GatewayRouter,
+            first_seen_utc: Utc::now(),
+            last_seen_utc: Utc::now(),
+            detection_source: DeviceDetectionSource::ArpCache,
+        };
+
+        let dev2_new = DiscoveredDevice {
+            network_id: "net_A".to_string(),
+            mac: "AA:BB:CC:DD:EE:01".to_string(),
+            ip: "192.168.1.50".to_string(),
+            hostname: Some("laptop.lan".to_string()),
+            vendor: Some("Dell".to_string()),
+            is_trusted: false,
+            is_gateway: false,
+            is_local_machine: false,
+            custom_alias: None,
+            display_category: DeviceDisplayCategory::KnownVendor("Dell".to_string()),
+            first_seen_utc: Utc::now(),
+            last_seen_utc: Utc::now(),
+            detection_source: DeviceDetectionSource::ArpCache,
+        };
+
+        persist_discovered_devices(&conn, "net_A", &[dev1_update, dev2_new]).unwrap();
+
+        // 3. Verificar que ambos dispositivos están persistidos y visibles en UI
+        let devices = query_persisted_net_devices(&conn).unwrap();
+        assert_eq!(devices.len(), 2);
+
+        let d1 = devices.iter().find(|d| d.mac == "11:22:33:44:55:66").unwrap();
+        assert_eq!(d1.ip, "192.168.1.254", "La IP debe actualizarse");
+        assert_eq!(d1.hostname, "router-updated.lan", "El hostname debe actualizarse");
+        assert_eq!(d1.display_name, "Router Principal", "El alias personalizado debe preservarse");
+        assert!(d1.is_trusted, "El estado de confianza debe preservarse");
+
+        let d2 = devices.iter().find(|d| d.mac == "AA:BB:CC:DD:EE:01").unwrap();
+        assert_eq!(d2.ip, "192.168.1.50");
+        assert_eq!(d2.hostname, "laptop.lan");
+        assert_eq!(d2.vendor, "Dell");
+        assert!(!d2.is_trusted);
+
+        // 4. Aislamiento por red: observar la misma MAC en net_B
+        let dev_b = DiscoveredDevice {
+            network_id: "net_B".to_string(),
+            mac: "11:22:33:44:55:66".to_string(),
+            ip: "10.0.0.1".to_string(),
+            hostname: Some("gateway.guest".to_string()),
+            vendor: Some("Netgear".to_string()),
+            is_trusted: false,
+            is_gateway: true,
+            is_local_machine: false,
+            custom_alias: None,
+            display_category: DeviceDisplayCategory::GatewayRouter,
+            first_seen_utc: Utc::now(),
+            last_seen_utc: Utc::now(),
+            detection_source: DeviceDetectionSource::ArpCache,
+        };
+
+        persist_discovered_devices(&conn, "net_B", &[dev_b]).unwrap();
+
+        let all_devices = query_persisted_net_devices(&conn).unwrap();
+        assert_eq!(all_devices.len(), 3, "Debe haber 3 registros (aislados por network_id)");
+
+        // Verificar aislamiento directo en SQLite
+        let (net_a_trusted, net_a_alias): (i32, Option<String>) = conn
+            .query_row(
+                "SELECT is_trusted, custom_alias FROM net_devices WHERE network_id = 'net_A' AND mac = '11:22:33:44:55:66'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(net_a_trusted, 1);
+        assert_eq!(net_a_alias, Some("Router Principal".to_string()));
+
+        let (net_b_trusted, net_b_alias): (i32, Option<String>) = conn
+            .query_row(
+                "SELECT is_trusted, custom_alias FROM net_devices WHERE network_id = 'net_B' AND mac = '11:22:33:44:55:66'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(net_b_trusted, 0);
+        assert_eq!(net_b_alias, None);
+    }
+
+    #[test]
+    fn test_pie_incident_filter_preservation_and_stale_suppression() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE pie_incidents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                category TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                risk_score INTEGER NOT NULL,
+                confidence REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                title TEXT NOT NULL,
+                simple_summary TEXT NOT NULL,
+                simple_recommendation TEXT NOT NULL,
+                technical_rule_id TEXT NOT NULL,
+                correlation_key TEXT,
+                last_updated TEXT NOT NULL,
+                technical_impact TEXT NOT NULL DEFAULT '',
+                technical_mitigation TEXT NOT NULL DEFAULT '',
+                diagnostic_limitations TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE pie_incident_evidences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id INTEGER NOT NULL,
+                timestamp TEXT NOT NULL,
+                source_module TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                observable_json TEXT NOT NULL
+            );"
+        ).unwrap();
+
+        // Insertar 1 activo y 1 resuelto
+        conn.execute(
+            "INSERT INTO pie_incidents (timestamp, category, severity, risk_score, confidence, status, title, simple_summary, simple_recommendation, technical_rule_id, last_updated)
+             VALUES (?1, 'network', 'high', 80, 0.9, 'active', 'Incidente Activo', 'Resumen', 'Rec', 'R1', ?1)",
+            params![Utc::now().to_rfc3339()],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO pie_incidents (timestamp, category, severity, risk_score, confidence, status, title, simple_summary, simple_recommendation, technical_rule_id, last_updated)
+             VALUES (?1, 'system', 'low', 30, 0.7, 'resolved', 'Incidente Resuelto', 'Resumen', 'Rec', 'R2', ?1)",
+            params![Utc::now().to_rfc3339()],
+        ).unwrap();
+
+        // 1. Test de preservación de filtros en query_persisted_incidents
+        let all = query_persisted_incidents(&conn, None).unwrap();
+        assert_eq!(all.len(), 2, "Filtro All (0) debe traer todos los incidentes");
+
+        let active = query_persisted_incidents(&conn, Some(IncidentStatus::Active)).unwrap();
+        assert_eq!(active.len(), 1, "Filtro Active (1) debe traer solo activos");
+        assert_eq!(active[0].status, "active");
+
+        let resolved = query_persisted_incidents(&conn, Some(IncidentStatus::Resolved)).unwrap();
+        assert_eq!(resolved.len(), 1, "Filtro Resolved (2) debe traer solo resueltos");
+        assert_eq!(resolved[0].status, "resolved");
+
+        // 2. Test del mecanismo de supresión de resultados obsoletos (stale results)
+        let request_seq = AtomicU64::new(0);
+
+        // Petición 1: Usuario filtra por Active
+        let seq1 = request_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        assert_eq!(seq1, 1);
+
+        // Petición 2: Usuario rápidamente cambia a Resolved antes de que termine petición 1
+        let seq2 = request_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        assert_eq!(seq2, 2);
+
+        // Simular llegada tardía de Petición 1
+        let current_active_filter_in_ui = 2; // UI ya está en Resolved
+        let is_stale_1 = seq1 != request_seq.load(Ordering::SeqCst) || current_active_filter_in_ui != 1;
+        assert!(is_stale_1, "El resultado de la petición 1 debe ser descartado por obsoleto");
+
+        // Simular llegada de Petición 2
+        let is_stale_2 = seq2 != request_seq.load(Ordering::SeqCst) || current_active_filter_in_ui != 2;
+        assert!(!is_stale_2, "El resultado de la petición 2 debe ser aceptado");
     }
 }

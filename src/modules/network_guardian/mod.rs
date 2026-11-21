@@ -207,6 +207,23 @@ impl NetworkGuardian {
                 known_set.insert(dev.mac.clone());
             }
             self.baseline_initialized_networks.insert(network_id.clone());
+
+            // Persistir observaciones de línea base en PIE sin generar alertas
+            if let Some(bus) = &self.event_bus {
+                for dev in &report.advanced.devices {
+                    let _ = bus.try_emit_critical(
+                        crate::modules::pie::PulseCriticalEvent::DeviceObserved {
+                            network_id: network_id.clone(),
+                            mac: dev.mac.clone(),
+                            ip: dev.ip.clone(),
+                            hostname: dev.hostname.clone(),
+                            vendor: dev.vendor.clone(),
+                            is_trusted: dev.is_trusted,
+                        },
+                    );
+                }
+            }
+
             tracing::info!(
                 target: "network_guardian",
                 "Silent baseline inventory initialized for network '{}' ({} devices registered)",

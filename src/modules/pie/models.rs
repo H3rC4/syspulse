@@ -183,6 +183,14 @@ pub enum PulseCriticalEvent {
     },
 
     // ── Eventos de Red (Network Guardian) ──
+    DeviceObserved {
+        network_id: String,
+        mac: String,
+        ip: String,
+        hostname: Option<String>,
+        vendor: Option<String>,
+        is_trusted: bool,
+    },
     NewDeviceDiscovered {
         network_id: String,
         mac: String,

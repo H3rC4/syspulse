@@ -216,6 +216,8 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 Las siguientes pruebas con hardware real quedan registradas para ejecutarse una vez finalizada la Fase 5 con la interfaz gráfica Slint Neón:
 1. **Conectividad:** Cotejo de RTT y Jitter frente a `ping` nativo en Windows 10/11 y desconexión/reconexión de cable de red.
 2. **Wi-Fi Analyzer:** Cotejo de intensidad de señal (%) y SSID con la bandeja del sistema de Windows, y prueba en Modo Avión.
-3. **Dispositivos:** Escaneo en red doméstica real verificando detección de router, smartphones, consolas y Smart TVs con fabricantes reales.
-4. **Usabilidad:** Validación de claridad en Modo Simple para usuarios sin conocimientos técnicos.
-5. **Smart Cleaner:** Verificar en Windows real cuarentena/restauración en mismo volumen y cross-volume, reparse points y recuperación tras cierre forzado, una vez integrada la UI.
+3. **Dispositivos:** Escaneo en red doméstica real verificando detección de router, smartphones, consolas y Smart TVs con fabricantes reales y preservación de alias/confianza.
+4. **Usabilidad y Textos Visuales EN / es-AR:** Cotejo exhaustivo visual de cadenas i18n en Modo Simple y Avanzado en ambos idiomas sin truncamientos ni solapamientos tipográficos.
+5. **Estados de Error y Degradación:** Validación visual en UI de estados sin adaptador Wi-Fi, Ethernet desconectado, permisos limitados o Gateway inaccesible.
+6. **Consumo de CPU en Reposo:** Medición rigurosa del uso de procesador en segundo plano verificando cumplimiento estricto (< 0.5% en reposo con sondeo ICMP cada 15s).
+7. **Smart Cleaner:** Verificar en Windows real cuarentena/restauración en mismo volumen y cross-volume, reparse points y recuperación tras cierre forzado, una vez integrada la UI.
