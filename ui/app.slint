@@ -124,6 +124,111 @@ export struct TopProcessData {
     memory-mb: int,
 }
 
+export struct NetDeviceData {
+    mac: string,
+    ip: string,
+    hostname: string,
+    vendor: string,
+    is-trusted: bool,
+    is-gateway: bool,
+    is-local: bool,
+    display-name: string,
+    category-label: string,
+    first-seen: string,
+    last-seen: string,
+}
+
+export struct WifiConnectionData {
+    is-available: bool,
+    adapter-state: string,
+    ssid: string,
+    bssid: string,
+    signal-quality: int,
+    rssi-dbm: int,
+    channel: int,
+    band: string,
+    security-level: string,
+    phy-type: string,
+    tx-rate-mbps: float,
+    rx-rate-mbps: float,
+    signal-rating: string,
+    stability-rating: string,
+    recommendation: string,
+}
+
+export struct WifiChannelData {
+    channel: int,
+    band: string,
+    network-count: int,
+    congestion-score: float,
+    is-current: bool,
+    is-recommended: bool,
+    reason: string,
+}
+
+export struct WifiNearbyData {
+    ssid: string,
+    bssid: string,
+    signal: int,
+    channel: int,
+    band: string,
+    security: string,
+}
+
+export struct LinkQualityData {
+    adapter-name: string,
+    local-ip: string,
+    gateway-ip: string,
+    gateway-health: string,
+    internet-health: string,
+    gateway-rtt-ms: float,
+    internet-rtt-ms: float,
+    jitter-ms: float,
+    packet-loss: float,
+    status-title: string,
+    status-description: string,
+    recommendation: string,
+    technical-summary: string,
+    is-connected: bool,
+}
+
+export struct SocketConnectionData {
+    protocol: string,
+    local-endpoint: string,
+    remote-endpoint: string,
+    state: string,
+    pid: int,
+    process-name: string,
+    is-alive: bool,
+}
+
+export struct PieEvidenceData {
+    id: int,
+    timestamp: string,
+    source-module: string,
+    event-type: string,
+    observable-json: string,
+}
+
+export struct PieIncidentData {
+    id: int,
+    timestamp: string,
+    category: string,
+    severity: string,
+    risk-score: int,
+    confidence: float,
+    status: string,
+    title: string,
+    simple-summary: string,
+    simple-recommendation: string,
+    technical-rule-id: string,
+    technical-impact: string,
+    technical-mitigation: string,
+    diagnostic-limitations: string,
+    evidence-count: int,
+    evidences: [PieEvidenceData],
+}
+
 // ── Helper components (internal, no export needed) ──
 
 component SidebarButton inherits Rectangle {
@@ -1385,6 +1490,910 @@ component SystemMonitorTab inherits Rectangle {
     }
 }
 
+// ── Network Guardian Tab ──
+
+component NetworkGuardianTab inherits Rectangle {
+    in-out property <int> sub-tab: 0;
+
+    // Devices section
+    in property <[NetDeviceData]> devices: [];
+    in property <bool> is-scanning: false;
+    in property <string> scan-status: "";
+    callback refresh-devices();
+    callback scan-network();
+
+    // Wi-Fi section
+    in property <WifiConnectionData> wifi-info;
+    in property <[WifiChannelData]> wifi-channels: [];
+    in property <[WifiNearbyData]> wifi-nearby: [];
+    in property <bool> is-loading-wifi: false;
+    in property <string> wifi-error: "";
+    callback refresh-wifi();
+
+    // Link Quality section
+    in property <LinkQualityData> link-quality;
+    in property <bool> is-checking-link: false;
+    in property <string> link-error: "";
+    callback refresh-link();
+
+    // Connections section
+    in property <[SocketConnectionData]> connections: [];
+    in property <bool> is-loading-connections: false;
+    callback refresh-connections();
+
+    VerticalLayout {
+        padding-left: 36px;
+        padding-right: 36px;
+        padding-top: 28px;
+        padding-bottom: 28px;
+        spacing: 20px;
+
+        VerticalLayout {
+            spacing: 6px;
+            SectionTitle { text: "Network Guardian"; }
+            SectionDescription { text: "Auditoría de red local, diagnóstico Wi-Fi y monitoreo de sockets en tiempo real."; }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            TabPill { label: "Dispositivos"; active: sub-tab == 0; clicked => { sub-tab = 0; } }
+            TabPill { label: "Wi-Fi Analyzer"; active: sub-tab == 1; clicked => { sub-tab = 1; } }
+            TabPill { label: "Calidad de Enlace"; active: sub-tab == 2; clicked => { sub-tab = 2; } }
+            TabPill { label: "Conexiones"; active: sub-tab == 3; clicked => { sub-tab = 3; } }
+        }
+
+        // Subtab 0: Devices
+        if sub-tab == 0: VerticalLayout {
+            spacing: 16px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+
+                NeonButton {
+                    text: "Actualizar";
+                    clicked => { refresh-devices(); }
+                }
+
+                NeonButton {
+                    text: is-scanning ? "Escaneando..." : "Escanear Red";
+                    primary: false;
+                    enabled: !is-scanning;
+                    clicked => { scan-network(); }
+                }
+
+                Rectangle { }
+
+                Text {
+                    text: devices.length + " dispositivos";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Theme.text-secondary;
+                    vertical-alignment: center;
+                }
+            }
+
+            if is-scanning: Rectangle {
+                height: 38px;
+                background: Theme.card-bg;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Theme.neon-cyan-dim;
+
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 10px;
+
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: Theme.neon-cyan;
+                    }
+
+                    Text {
+                        text: scan-status != "" ? scan-status : "Escaneando subred local con solicitudes ARP acotadas...";
+                        font-size: 12px;
+                        color: Theme.neon-cyan;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            if devices.length == 0 && !is-scanning: Rectangle {
+                height: 180px;
+                background: Theme.card-bg;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 10px;
+
+                    Text {
+                        text: "\u{25CE}";
+                        font-size: 32px;
+                        color: Theme.text-tertiary;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "No se encontraron dispositivos en la caché de red local";
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Pulsa Actualizar para inspeccionar la tabla ARP del kernel o Escanear Red para un barrido no invasivo.";
+                        font-size: 12px;
+                        color: Theme.text-tertiary;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            if devices.length > 0: Rectangle {
+                background: Theme.card-bg;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                ListView {
+                    for dev[index] in devices: Rectangle {
+                        height: 58px;
+                        background: Math.mod(index, 2) == 1 ? #ffffff03 : transparent;
+                        border-radius: 8px;
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 16px;
+
+                            VerticalLayout {
+                                width: 220px;
+                                alignment: center;
+                                spacing: 2px;
+
+                                Text {
+                                    text: dev.display-name;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    color: Theme.text-primary;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: dev.category-label;
+                                    font-size: 11px;
+                                    color: Theme.text-secondary;
+                                    overflow: elide;
+                                }
+                            }
+
+                            VerticalLayout {
+                                width: 170px;
+                                alignment: center;
+                                spacing: 2px;
+
+                                Text {
+                                    text: dev.ip;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: Theme.neon-cyan;
+                                }
+
+                                Text {
+                                    text: dev.mac;
+                                    font-size: 11px;
+                                    color: Theme.text-tertiary;
+                                }
+                            }
+
+                            Text {
+                                text: dev.vendor;
+                                font-size: 12px;
+                                color: Theme.text-secondary;
+                                width: 150px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+
+                                Rectangle {
+                                    height: 22px;
+                                    border-radius: 6px;
+                                    background: dev.is-trusted ? #00ff9d18 : #ffffff08;
+                                    border-width: 1px;
+                                    border-color: dev.is-trusted ? Theme.neon-green : Theme.border-color;
+
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        Text {
+                                            text: dev.is-trusted ? "Confiable" : "Desconocido";
+                                            font-size: 10px;
+                                            font-weight: 600;
+                                            color: dev.is-trusted ? Theme.neon-green : Theme.text-secondary;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                if dev.is-gateway: Rectangle {
+                                    height: 22px;
+                                    border-radius: 6px;
+                                    background: #00f0ff18;
+                                    border-width: 1px;
+                                    border-color: Theme.neon-cyan;
+
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        Text {
+                                            text: "Router";
+                                            font-size: 10px;
+                                            font-weight: 600;
+                                            color: Theme.neon-cyan;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                if dev.is-local: Rectangle {
+                                    height: 22px;
+                                    border-radius: 6px;
+                                    background: #a855f718;
+                                    border-width: 1px;
+                                    border-color: Theme.neon-purple;
+
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        Text {
+                                            text: "Este PC";
+                                            font-size: 10px;
+                                            font-weight: 600;
+                                            color: Theme.neon-purple;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle { }
+
+                            Text {
+                                text: dev.last-seen;
+                                font-size: 11px;
+                                color: Theme.text-tertiary;
+                                width: 130px;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Subtab 1: Wi-Fi Analyzer
+        if sub-tab == 1: VerticalLayout {
+            spacing: 16px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+
+                NeonButton {
+                    text: is-loading-wifi ? "Escaneando..." : "Actualizar Wi-Fi";
+                    enabled: !is-loading-wifi;
+                    clicked => { refresh-wifi(); }
+                }
+            }
+
+            if !wifi-info.is-available: Rectangle {
+                height: 140px;
+                background: Theme.card-bg;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+
+                    Text {
+                        text: "\u{26A0}";
+                        font-size: 28px;
+                        color: Theme.neon-orange;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Adaptador Wi-Fi desconectado o no disponible";
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: wifi-error != "" ? wifi-error : "Verifica que el Wi-Fi esté encendido o que el equipo no esté conectado exclusivamente por Ethernet.";
+                        font-size: 12px;
+                        color: Theme.text-tertiary;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            if wifi-info.is-available: VerticalLayout {
+                spacing: 16px;
+
+                Rectangle {
+                    background: Theme.card-bg;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        padding-top: 16px;
+                        padding-bottom: 16px;
+                        spacing: 12px;
+
+                        HorizontalLayout {
+                            Text {
+                                text: "Conexión Activa: " + (wifi-info.ssid != "" ? wifi-info.ssid : "Sin red");
+                                font-size: 16px;
+                                font-weight: 700;
+                                color: Theme.neon-cyan;
+                            }
+
+                            Rectangle { }
+
+                            Text {
+                                text: wifi-info.bssid != "" ? ("BSSID: " + wifi-info.bssid) : "";
+                                font-size: 11px;
+                                color: Theme.text-tertiary;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 24px;
+
+                            VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Señal"; font-size: 11px; color: Theme.text-tertiary; }
+                                Text {
+                                    text: wifi-info.signal-quality + "% (" + wifi-info.rssi-dbm + " dBm)";
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    color: Theme.neon-green;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Canal & Banda"; font-size: 11px; color: Theme.text-tertiary; }
+                                Text {
+                                    text: "Canal " + wifi-info.channel + " (" + wifi-info.band + ")";
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    color: Theme.text-primary;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Seguridad"; font-size: 11px; color: Theme.text-tertiary; }
+                                Text {
+                                    text: wifi-info.security-level;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    color: Theme.text-primary;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Velocidad de Enlace"; font-size: 11px; color: Theme.text-tertiary; }
+                                Text {
+                                    text: wifi-info.rx-rate-mbps + " / " + wifi-info.tx-rate-mbps + " Mbps";
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    color: Theme.text-primary;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Protocolo PHY"; font-size: 11px; color: Theme.text-tertiary; }
+                                Text {
+                                    text: wifi-info.phy-type != "" ? wifi-info.phy-type : "Desconocido";
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    color: Theme.text-primary;
+                                }
+                            }
+                        }
+
+                        if wifi-info.recommendation != "": Rectangle {
+                            height: 32px;
+                            background: #00ff9d10;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: #00ff9d30;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                Text {
+                                    text: "Recomendación: " + wifi-info.recommendation;
+                                    font-size: 11px;
+                                    color: Theme.neon-green;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: Theme.card-bg;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        padding-top: 16px;
+                        padding-bottom: 16px;
+                        spacing: 12px;
+
+                        Text {
+                            text: "Mapa de Canales Circundantes y Congestión";
+                            font-size: 14px;
+                            font-weight: 700;
+                            color: Theme.text-primary;
+                        }
+
+                        if wifi-channels.length == 0: Text {
+                            text: "No se registran datos de canales circundantes. Pulsa Actualizar Wi-Fi para iniciar un escaneo pasivo.";
+                            font-size: 12px;
+                            color: Theme.text-tertiary;
+                        }
+
+                        if wifi-channels.length > 0: ListView {
+                            for ch in wifi-channels: Rectangle {
+                                height: 42px;
+                                border-radius: 6px;
+
+                                HorizontalLayout {
+                                    spacing: 16px;
+
+                                    Text {
+                                        text: "Canal " + ch.channel;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        color: ch.is-current ? Theme.neon-cyan : Theme.text-primary;
+                                        width: 80px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Text {
+                                        text: ch.band;
+                                        font-size: 11px;
+                                        color: Theme.text-secondary;
+                                        width: 70px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Text {
+                                        text: ch.network-count + " redes";
+                                        font-size: 11px;
+                                        color: Theme.text-tertiary;
+                                        width: 70px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Rectangle {
+                                        width: 140px;
+                                        height: 10px;
+                                        background: Theme.surface;
+                                        border-radius: 5px;
+
+                                        Rectangle {
+                                            width: Math.min(parent.width, Math.max(10px, parent.width * (ch.congestion-score / 100.0)));
+                                            height: 100%;
+                                            border-radius: 5px;
+                                            background: ch.congestion-score > 60.0 ? Theme.danger : (ch.congestion-score > 30.0 ? Theme.neon-orange : Theme.neon-green);
+                                        }
+                                    }
+
+                                    if ch.is-current: Rectangle {
+                                        height: 20px;
+                                        border-radius: 4px;
+                                        background: #00f0ff18;
+                                        border-width: 1px;
+                                        border-color: Theme.neon-cyan;
+
+                                        HorizontalLayout {
+                                            padding-left: 6px;
+                                            padding-right: 6px;
+                                            Text { text: "ACTUAL"; font-size: 9px; font-weight: 700; color: Theme.neon-cyan; vertical-alignment: center; }
+                                        }
+                                    }
+
+                                    if ch.is-recommended: Rectangle {
+                                        height: 20px;
+                                        border-radius: 4px;
+                                        background: #00ff9d18;
+                                        border-width: 1px;
+                                        border-color: Theme.neon-green;
+
+                                        HorizontalLayout {
+                                            padding-left: 6px;
+                                            padding-right: 6px;
+                                            Text { text: "RECOMENDADO"; font-size: 9px; font-weight: 700; color: Theme.neon-green; vertical-alignment: center; }
+                                        }
+                                    }
+
+                                    Rectangle { }
+
+                                    Text {
+                                        text: ch.reason;
+                                        font-size: 11px;
+                                        color: Theme.text-secondary;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Subtab 2: Link Quality
+        if sub-tab == 2: VerticalLayout {
+            spacing: 16px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+
+                NeonButton {
+                    text: is-checking-link ? "Midiendo..." : "Verificar Calidad de Enlace";
+                    enabled: !is-checking-link;
+                    clicked => { refresh-link(); }
+                }
+            }
+
+            Rectangle {
+                background: Theme.card-bg;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: link-quality.is-connected ? Theme.border-subtle : Theme.danger-dim;
+
+                VerticalLayout {
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    padding-top: 16px;
+                    padding-bottom: 16px;
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        Text {
+                            text: link-quality.status-title != "" ? link-quality.status-title : "Estado de Conexión";
+                            font-size: 16px;
+                            font-weight: 700;
+                            color: link-quality.is-connected ? Theme.neon-green : Theme.danger;
+                        }
+
+                        Rectangle { }
+
+                        Text {
+                            text: "Adaptador: " + link-quality.adapter-name;
+                            font-size: 11px;
+                            color: Theme.text-tertiary;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Text {
+                        text: link-quality.status-description != "" ? link-quality.status-description : "Evaluando estado del enlace...";
+                        font-size: 12px;
+                        color: Theme.text-secondary;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 16px;
+                        Text { text: "IP Local: " + link-quality.local-ip; font-size: 11px; color: Theme.text-tertiary; }
+                        Text { text: "Gateway: " + link-quality.gateway-ip; font-size: 11px; color: Theme.text-tertiary; }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 14px;
+
+                Rectangle {
+                    background: Theme.card-bg;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 6px;
+                        Text { text: "Latencia Gateway"; font-size: 11px; color: Theme.text-tertiary; }
+                        Text {
+                            text: link-quality.gateway-rtt-ms >= 0.0 ? (link-quality.gateway-rtt-ms + " ms") : "Inalcanzable";
+                            font-size: 20px;
+                            font-weight: 700;
+                            color: link-quality.gateway-rtt-ms >= 0.0 && link-quality.gateway-rtt-ms < 20.0 ? Theme.neon-green : (link-quality.gateway-rtt-ms < 50.0 ? Theme.neon-cyan : Theme.neon-orange);
+                        }
+                        Text { text: link-quality.gateway-health; font-size: 11px; color: Theme.text-secondary; }
+                    }
+                }
+
+                Rectangle {
+                    background: Theme.card-bg;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 6px;
+                        Text { text: "Latencia Internet"; font-size: 11px; color: Theme.text-tertiary; }
+                        Text {
+                            text: link-quality.internet-rtt-ms >= 0.0 ? (link-quality.internet-rtt-ms + " ms") : "Inalcanzable";
+                            font-size: 20px;
+                            font-weight: 700;
+                            color: link-quality.internet-rtt-ms >= 0.0 && link-quality.internet-rtt-ms < 50.0 ? Theme.neon-green : (link-quality.internet-rtt-ms < 100.0 ? Theme.neon-cyan : Theme.neon-orange);
+                        }
+                        Text { text: link-quality.internet-health; font-size: 11px; color: Theme.text-secondary; }
+                    }
+                }
+
+                Rectangle {
+                    background: Theme.card-bg;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 6px;
+                        Text { text: "Jitter RFC 3550"; font-size: 11px; color: Theme.text-tertiary; }
+                        Text {
+                            text: link-quality.jitter-ms + " ms";
+                            font-size: 20px;
+                            font-weight: 700;
+                            color: link-quality.jitter-ms < 10.0 ? Theme.neon-green : (link-quality.jitter-ms < 25.0 ? Theme.neon-cyan : Theme.neon-orange);
+                        }
+                        Text { text: "Variabilidad temporal"; font-size: 11px; color: Theme.text-secondary; }
+                    }
+                }
+
+                Rectangle {
+                    background: Theme.card-bg;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 6px;
+                        Text { text: "Pérdida de Paquetes"; font-size: 11px; color: Theme.text-tertiary; }
+                        Text {
+                            text: link-quality.packet-loss + " %";
+                            font-size: 20px;
+                            font-weight: 700;
+                            color: link-quality.packet-loss == 0.0 ? Theme.neon-green : (link-quality.packet-loss < 5.0 ? Theme.neon-orange : Theme.danger);
+                        }
+                        Text { text: link-quality.packet-loss == 0.0 ? "Enlace estable" : "Descartes detectados"; font-size: 11px; color: Theme.text-secondary; }
+                    }
+                }
+            }
+
+            if link-quality.recommendation != "" || link-quality.technical-summary != "": Rectangle {
+                background: Theme.card-bg;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+
+                    if link-quality.recommendation != "": HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Recomendación:"; font-size: 12px; font-weight: 700; color: Theme.neon-cyan; width: 110px; }
+                        Text { text: link-quality.recommendation; font-size: 12px; color: Theme.text-primary; wrap: word-wrap; }
+                    }
+
+                    if link-quality.technical-summary != "": HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Resumen Técnico:"; font-size: 12px; font-weight: 700; color: Theme.neon-purple; width: 110px; }
+                        Text { text: link-quality.technical-summary; font-size: 12px; color: Theme.text-secondary; wrap: word-wrap; }
+                    }
+                }
+            }
+        }
+
+        // Subtab 3: Connections
+        if sub-tab == 3: VerticalLayout {
+            spacing: 16px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+
+                NeonButton {
+                    text: is-loading-connections ? "Actualizando..." : "Actualizar Conexiones";
+                    enabled: !is-loading-connections;
+                    clicked => { refresh-connections(); }
+                }
+
+                Rectangle { }
+
+                Text {
+                    text: connections.length + " sockets activos";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Theme.text-secondary;
+                    vertical-alignment: center;
+                }
+            }
+
+            if connections.length == 0: Rectangle {
+                height: 160px;
+                background: Theme.card-bg;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+
+                    Text {
+                        text: "\u{29BF}";
+                        font-size: 28px;
+                        color: Theme.text-tertiary;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "No se registran conexiones de red en este momento";
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Pulsa Actualizar Conexiones para consultar los sockets TCP y UDP del sistema mediante GetExtendedTcpTable.";
+                        font-size: 12px;
+                        color: Theme.text-tertiary;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            if connections.length > 0: Rectangle {
+                background: Theme.card-bg;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                ListView {
+                    for conn[index] in connections: Rectangle {
+                        height: 48px;
+                        background: Math.mod(index, 2) == 1 ? #ffffff03 : transparent;
+                        border-radius: 6px;
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 16px;
+
+                            Rectangle {
+                                width: 50px;
+                                height: 22px;
+                                border-radius: 6px;
+                                background: conn.protocol == "TCP" ? #00f0ff18 : #a855f718;
+                                border-width: 1px;
+                                border-color: conn.protocol == "TCP" ? Theme.neon-cyan : Theme.neon-purple;
+
+                                Text {
+                                    text: conn.protocol;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    color: conn.protocol == "TCP" ? Theme.neon-cyan : Theme.neon-purple;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: conn.local-endpoint;
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: Theme.text-primary;
+                                width: 170px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: conn.remote-endpoint;
+                                font-size: 12px;
+                                color: conn.remote-endpoint == "-" ? Theme.text-tertiary : Theme.neon-cyan;
+                                width: 170px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: conn.state;
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: conn.state == "ESTABLISHED" ? Theme.neon-green : (conn.state == "LISTEN" ? Theme.neon-cyan : Theme.text-secondary);
+                                width: 110px;
+                                vertical-alignment: center;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+
+                                Text {
+                                    text: conn.process-name + " (PID " + conn.pid + ")";
+                                    font-size: 12px;
+                                    font-weight: 500;
+                                    color: conn.is-alive ? Theme.text-primary : Theme.text-secondary;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+
+                                Rectangle {
+                                    height: 18px;
+                                    border-radius: 4px;
+                                    background: conn.is-alive ? #00ff9d15 : #ffffff08;
+
+                                    HorizontalLayout {
+                                        padding-left: 6px;
+                                        padding-right: 6px;
+                                        Text {
+                                            text: conn.is-alive ? "Activo" : "Cerrado";
+                                            font-size: 9px;
+                                            font-weight: 600;
+                                            color: conn.is-alive ? Theme.neon-green : Theme.text-tertiary;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ── AppWindow (LA UNICA exportada, hereda Window) ─
 
 export component AppWindow inherits Window {
@@ -1468,6 +2477,28 @@ export component AppWindow inherits Window {
     in property <[TopProcessData]> sys-top-ram: [];
     in property <string> sys-load-avg-text: "0.00 / 0.00 / 0.00";
     callback refresh-sys-stats();
+
+    // ── Network Guardian properties ──
+    in property <[NetDeviceData]> net-devices: [];
+    in property <bool> net-is-scanning: false;
+    in property <string> net-scan-status: "";
+    in property <WifiConnectionData> wifi-info;
+    in property <[WifiChannelData]> wifi-channels: [];
+    in property <[WifiNearbyData]> wifi-nearby: [];
+    in property <bool> wifi-is-loading: false;
+    in property <string> wifi-error: "";
+    in property <LinkQualityData> link-quality;
+    in property <bool> link-is-checking: false;
+    in property <string> link-error: "";
+    in property <[SocketConnectionData]> net-connections: [];
+    in property <bool> net-is-loading-connections: false;
+    in-out property <int> net-guardian-sub-tab: 0;
+
+    callback refresh-net-devices();
+    callback scan-net-devices();
+    callback refresh-wifi();
+    callback refresh-link-quality();
+    callback refresh-net-connections();
 
     HorizontalLayout {
         // ── Sidebar ──
@@ -1575,6 +2606,13 @@ export component AppWindow inherits Window {
                     icon: "\u{25B2}";
                     active: root.current-tab == 3;
                     clicked => { root.current-tab = 3; root.tab-changed(3); }
+                }
+
+                SidebarButton {
+                    label: "Network Guardian";
+                    icon: "\u{29BF}";
+                    active: root.current-tab == 5;
+                    clicked => { root.current-tab = 5; root.tab-changed(5); }
                 }
 
                 Rectangle { height: 8px; }
@@ -1726,6 +2764,28 @@ export component AppWindow inherits Window {
                 version: root.app-version;
                 save => { root.save-settings(); }
                 check-updates => { root.check-updates(); }
+            }
+
+            if root.current-tab == 5: NetworkGuardianTab {
+                sub-tab <=> root.net-guardian-sub-tab;
+                devices: root.net-devices;
+                is-scanning: root.net-is-scanning;
+                scan-status: root.net-scan-status;
+                wifi-info: root.wifi-info;
+                wifi-channels: root.wifi-channels;
+                wifi-nearby: root.wifi-nearby;
+                is-loading-wifi: root.wifi-is-loading;
+                wifi-error: root.wifi-error;
+                link-quality: root.link-quality;
+                is-checking-link: root.link-is-checking;
+                link-error: root.link-error;
+                connections: root.net-connections;
+                is-loading-connections: root.net-is-loading-connections;
+                refresh-devices => { root.refresh-net-devices(); }
+                scan-network => { root.scan-net-devices(); }
+                refresh-wifi => { root.refresh-wifi(); }
+                refresh-link => { root.refresh-link-quality(); }
+                refresh-connections => { root.refresh-net-connections(); }
             }
         }
     }

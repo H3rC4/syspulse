@@ -204,8 +204,19 @@ flowchart TD
   - [x] **Subtarea 4.4: Exportador Forense Unificado para IA (EJECUTADO):**
     - Exportador unificado de incidentes y evidencias a JSON estructurado (`ForensicReport`) y CSV tabular RFC 4180 con escape estricto, orden determinista, preservación íntegra de contexto observable y 6 pruebas unitarias específicas (98 tests totales en workspace).
 - [ ] **Fase 5: UI Slint Neón y Correlación con Process Hunter**
-  - Pestaña Network Guardian y Centro de Incidentes de PIE en `ui/app.slint`.
-  - Correlación de sockets abiertos con PIDs de procesos mediante `GetExtendedTcpTable`.
+  - [x] **Subtarea 5.1: Correlador de Sockets (`SocketCorrelator`) (EJECUTADO, SHA `a848b15`):**
+    - Implementación con APIs nativas Win32 `GetExtendedTcpTable` y `GetExtendedUdpTable` en IPv4/IPv6 en modo usuario sin UAC.
+    - Correlación con procesos activos (`sysinfo`) e histórico SQLite de Process Hunter (`process_events`) para procesos finalizados.
+    - Manejo seguro de procesos extintos, reutilización de PIDs y metadatos no disponibles sin inventar nombres ni estados.
+    - 5 pruebas unitarias focalizadas (108 tests totales).
+  - [x] **Subtarea 5.2: Pestaña `NetworkGuardianTab` en Slint (EJECUTADO):**
+    - Sub-pestañas: Dispositivos (inventario, alias, badges de confianza), Wi-Fi Analyzer (SSID, canal, dBm, mapa de congestión y recomendaciones), Calidad de Enlace (latencias gateway/internet, jitter RFC 3550, packet loss), y Conexiones (sockets activos mapeados a proceso y PID).
+    - Estados de carga, vacío, error y no disponible integrados con la paleta visual neón.
+    - Contratos de UI y conversor en `ui_adapter.rs` con 6 tests unitarios (109 tests totales en workspace).
+  - [ ] **Subtarea 5.3: Centro de Incidentes de PIE en Slint (`PieIncidentsTab`):**
+    - Vista interactiva de incidentes con severity badges, filtros, modo dual (Simple/Avanzado), evidencias observables y exportación forense.
+  - [ ] **Subtarea 5.4: Conexión de Controladores Asíncronos en `src/main.rs` e i18n:**
+    - Handlers de refresco y escaneo manual sin bloqueos de renderizado.
 
 ---
 

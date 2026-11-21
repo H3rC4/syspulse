@@ -8,6 +8,7 @@ pub mod oui;
 pub mod ping;
 pub mod scanner;
 pub mod socket_correlator;
+pub mod ui_adapter;
 pub mod wifi;
 pub mod wifi_models;
 
