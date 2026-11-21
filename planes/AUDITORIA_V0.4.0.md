@@ -66,7 +66,7 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
 | **A11.13** | User confirmations | Implementado (diálogos modales rfd antes de limpiar, cuarentenar o borrar) | Bloque 4 |
 | **A11.14** | UI error reporting | Implementado (propagación explícita de fallos en barra de estado y logs) | Bloque 4 |
 | **A11.15** | Unsafe file opening | Implementado (botón Reveal en explorador; bloqueo de ejecución arbitraria) | Bloque 4 |
-| **A11.16** | Regression tests | En progreso (46 tests de cleaner; 91 totales) | Bloque 5 |
+| **A11.16** | Regression tests | ✅ Validado (suite integral de 47 tests de cleaner; 92 totales en workspace) | Bloque 5 |
 
 ---
 
@@ -114,8 +114,8 @@ Se acepta provisionalmente la evidencia técnica presentada en la auditoría est
    - **UI error reporting (A11.14):** Notificación visual clara en la barra de estado de Slint ante fallos o errores parciales en operaciones de limpieza, cuarentena, restauración y borrado permanente.
    - **Unsafe file opening (A11.15):** Acción "Reveal" en lugar de "Open" para archivos en cuarentena y rutas protegidas (`explorer /select, <path>`), impidiendo la ejecución inadvertida de binarios o scripts no confiables.
    - **Tratamiento de R06 (Unstable UI row indexes):** Uso de identificador unívoco y estable (`key: string`, nombre de archivo en cuarentena) en lugar de índices numéricos de fila en callbacks de `restore` y `delete`. Desactivación explícita del checkbox de borrado permanente en Settings con texto explicativo de seguridad (R10) y protección de rutas de datos de SysPulse (R09).
-5. **Bloque 5: Validación integral (PENDIENTE)**
-   - Regression tests (A11.16). Suite completa de pruebas de estrés, escenarios de fallo de disco y cobertura unitaria/integración.
+5. **Bloque 5: Validación integral (EJECUTADO)**
+   - **Regression tests (A11.16):** Validación integral de ciclo de vida con archivos temporales descartables (`test_b5_final_validation_lifecycle`): escaneo normal de duplicados, selección y retención inalterada de copia independiente, aislamiento e integridad de cuarentena, resolución por clave estable independiente de ordenación o refresco en UI, restauración exacta bit a bit, rechazo en backend ante selección de todas las copias (A11.06), contención activa de auto-purga (A11.09) y borrado destructivo permanente ruteado a papelera (R10). 47 tests de cleaner, 92 totales en el workspace.
 
 ---
 

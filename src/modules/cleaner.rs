@@ -4164,4 +4164,91 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    async fn test_b5_final_validation_lifecycle() {
+        let workspace = TestWorkspace::new("b5_validation");
+        let cleaner = workspace.cleaner();
+
+        let payload = b"Final validation payload for SysPulse Smart Cleaner";
+        let file_orig = workspace.source_file("doc_orig.txt", payload);
+        let file_dup1 = workspace.source_file("doc_dup1.txt", payload);
+        let file_dup2 = workspace.source_file("doc_dup2.txt", payload);
+
+        // 1. Scan duplicates
+        let token = CancellationToken::new();
+        let pause_flag = Arc::new(AtomicBool::new(false));
+        let groups = cleaner
+            .find_duplicates(workspace.source.clone(), token.clone(), pause_flag.clone(), |_, _| {})
+            .await
+            .expect("Duplicate scan must succeed");
+
+        assert_eq!(groups.len(), 1, "Must find exactly one duplicate group");
+        assert_eq!(groups[0].files.len(), 3, "Must detect all 3 identical files");
+        assert_eq!(groups[0].size, payload.len() as u64);
+
+        // 2. Selection: select dup1 and dup2, retain orig
+        let selected_groups = vec![DuplicateGroup {
+            hash: groups[0].hash.clone(),
+            size: groups[0].size,
+            files: vec![
+                DuplicateFile { path: file_orig.clone(), created: None, selected: false },
+                DuplicateFile { path: file_dup1.clone(), created: None, selected: true },
+                DuplicateFile { path: file_dup2.clone(), created: None, selected: true },
+            ],
+        }];
+
+        // 3. Quarantine selected
+        let quarantined = cleaner
+            .quarantine_selected_duplicates(&selected_groups, token.clone())
+            .await
+            .expect("Quarantine of selected duplicates must succeed");
+        assert_eq!(quarantined.len(), 2, "Must quarantine exactly the 2 selected files");
+
+        // 4. Verify retained copy remains valid and independent
+        assert!(file_orig.exists(), "Retained copy must remain intact on disk");
+        assert_eq!(std::fs::read(&file_orig).unwrap(), payload, "Retained copy content must match original");
+        assert!(!file_dup1.exists(), "Quarantined dup1 must be moved out of source");
+        assert!(!file_dup2.exists(), "Quarantined dup2 must be moved out of source");
+
+        // 5. Stable UI identifiers: list quarantine and verify keys
+        let mut entries = cleaner.list_quarantine().expect("Must list quarantine");
+        assert_eq!(entries.len(), 2);
+        let key_dup1 = entries.iter().find(|e| e.original_path == file_dup1).map(|e| {
+            e.quarantine_path.file_name().unwrap().to_string_lossy().to_string()
+        }).expect("dup1 entry must exist in quarantine");
+
+        // Simulate UI reverse sorting/reordering: look up by stable key
+        entries.reverse();
+        let target_entry = entries.iter().find(|e| {
+            e.quarantine_path.file_name().map(|n| n.to_string_lossy().to_string()) == Some(key_dup1.clone())
+        }).cloned().expect("Entry must be found by stable key regardless of ordering");
+
+        // 6. Restore from quarantine
+        cleaner.restore_from_quarantine(&target_entry).expect("Restore must succeed");
+        assert!(file_dup1.exists(), "Restored file must be back in original source");
+        assert_eq!(std::fs::read(&file_dup1).unwrap(), payload, "Restored content must be byte-for-byte identical");
+
+        let remaining = cleaner.list_quarantine().expect("Must list quarantine after restore");
+        assert_eq!(remaining.len(), 1, "Only dup2 should remain in quarantine");
+
+        // 7. Prevent selecting all copies (A11.06)
+        let all_selected = vec![DuplicateGroup {
+            hash: groups[0].hash.clone(),
+            size: groups[0].size,
+            files: vec![
+                DuplicateFile { path: file_orig.clone(), created: None, selected: true },
+                DuplicateFile { path: file_dup1.clone(), created: None, selected: true },
+            ],
+        }];
+        let all_err = cleaner.quarantine_selected_duplicates(&all_selected, token.clone()).await;
+        assert!(all_err.is_err(), "Must reject selecting all copies of a group");
+        assert!(format!("{:#}", all_err.unwrap_err()).contains("copies in duplicate group"));
+
+        // 8. Auto-purge remains disabled (A11.09)
+        let purged = cleaner.purge_old_quarantine(30).expect("Purge check must succeed");
+        assert_eq!(purged, 0, "Auto-purge must remain contained/disabled (0 files purged)");
+        let remaining_after = cleaner.list_quarantine().unwrap();
+        assert_eq!(remaining_after.len(), 1, "Quarantined file must not be purged");
+    }
 }

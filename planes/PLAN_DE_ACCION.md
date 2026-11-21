@@ -200,7 +200,7 @@ flowchart TD
         - [x] **Completitud Bloque 2:** A11.04 asignado obligatoriamente a Bloque 3. Bloque 2C no autorizado.
       - [x] **Bloque 3: Seguridad de rutas y duplicados (EJECUTADO):** Prevención de colisiones, cruce de enlaces/junctions, canonicalización, mitigación TOCTOU e integridad en duplicados (A11.01, A11.02, A11.03, A11.04 obligatorio, A11.05, A11.06). 6 pruebas unitarias nuevas agregadas (44 de cleaner, 89 totales).
       - [x] **Bloque 4: Seguridad de interfaz (EJECUTADO):** Confirmaciones de usuario mediante diálogos modales (A11.13), reporte visual de errores en UI y logs (A11.14), apertura segura "Reveal" en explorador (A11.15), identificación unívoca con clave estable para restaurar/borrar (R06), caché de duplicados (R08), protección de directorios de SysPulse (R09) y desactivación de borrado permanente directo (R10). 2 pruebas unitarias nuevas agregadas (46 de cleaner, 91 totales).
-      - [ ] **Bloque 5: Validación integral:** Cobertura de pruebas de estrés, fallos y escenarios reales aislados (A11.16).
+      - [x] **Bloque 5: Validación integral (EJECUTADO):** Cobertura y validación integral de ciclo de vida con archivos temporales descartables, pruebas de estrés, aislamiento y regresión (A11.16). 1 prueba unitaria/integración agregada (47 de cleaner, 92 totales).
   - [ ] **Subtarea 4.4: Exportador Forense Unificado para IA:**
     - Exportador unificado de incidentes y evidencias a JSON estructurado y CSV para IA.
 - [ ] **Fase 5: UI Slint Neón y Correlación con Process Hunter**
