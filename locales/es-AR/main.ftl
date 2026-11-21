@@ -120,6 +120,9 @@ net-link-gateway = Latencia Gateway
 net-link-internet = Latencia Internet
 net-link-jitter = Jitter
 net-link-loss = Pérdida de Paquetes
+net-tab-connections = Conexiones
+net-connections-empty = No se registran conexiones de red activas.
+net-connections-loading = Cargando conexiones de red activas...
 
 # Pulse Intelligence Engine (PIE)
 tab-pie-incidents = Centro de Incidentes
@@ -138,3 +141,5 @@ pie-rule-high-cpu-title = Una aplicación está sobrecargando el procesador
 pie-rule-mem-pressure-title = La memoria del equipo está casi llena
 pie-rule-sys-saturation-title = Tu equipo está operando al límite de su capacidad
 pie-rule-temp-exec-title = Aplicación no habitual ejecutándose desde carpeta temporal
+pie-export-success = Reporte forense exportado con éxito a { $path }
+pie-export-error = Error al exportar reporte forense: { $error }

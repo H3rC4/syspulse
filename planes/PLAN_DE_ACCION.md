@@ -203,20 +203,24 @@ flowchart TD
       - [x] **Bloque 5: Validación integral (EJECUTADO):** Cobertura y validación integral de ciclo de vida con archivos temporales descartables, pruebas de estrés, aislamiento y regresión (A11.16). 1 prueba unitaria/integración agregada (47 de cleaner, 92 totales).
   - [x] **Subtarea 4.4: Exportador Forense Unificado para IA (EJECUTADO):**
     - Exportador unificado de incidentes y evidencias a JSON estructurado (`ForensicReport`) y CSV tabular RFC 4180 con escape estricto, orden determinista, preservación íntegra de contexto observable y 6 pruebas unitarias específicas (98 tests totales en workspace).
-- [ ] **Fase 5: UI Slint Neón y Correlación con Process Hunter**
+- [x] **Fase 5: UI Slint Neón y Correlación con Process Hunter (Completada al 100%)**
   - [x] **Subtarea 5.1: Correlador de Sockets (`SocketCorrelator`) (EJECUTADO, SHA `a848b15`):**
     - Implementación con APIs nativas Win32 `GetExtendedTcpTable` y `GetExtendedUdpTable` en IPv4/IPv6 en modo usuario sin UAC.
     - Correlación con procesos activos (`sysinfo`) e histórico SQLite de Process Hunter (`process_events`) para procesos finalizados.
     - Manejo seguro de procesos extintos, reutilización de PIDs y metadatos no disponibles sin inventar nombres ni estados.
     - 5 pruebas unitarias focalizadas (108 tests totales).
-  - [x] **Subtarea 5.2: Pestaña `NetworkGuardianTab` en Slint (EJECUTADO):**
+  - [x] **Subtarea 5.2: Pestaña `NetworkGuardianTab` en Slint (EJECUTADO, SHA `09134f6`):**
     - Sub-pestañas: Dispositivos (inventario, alias, badges de confianza), Wi-Fi Analyzer (SSID, canal, dBm, mapa de congestión y recomendaciones), Calidad de Enlace (latencias gateway/internet, jitter RFC 3550, packet loss), y Conexiones (sockets activos mapeados a proceso y PID).
     - Estados de carga, vacío, error y no disponible integrados con la paleta visual neón.
     - Contratos de UI y conversor en `ui_adapter.rs` con 6 tests unitarios (109 tests totales en workspace).
-  - [x] **Subtarea 5.3: Centro de Incidentes de PIE en Slint (`PieIncidentsTab`) (EJECUTADO):**
+  - [x] **Subtarea 5.3: Centro de Incidentes de PIE en Slint (`PieIncidentsTab`) (EJECUTADO, SHA `8a7b504`):**
     - Vista interactiva de incidentes con severity badges, filtros (All, Active, Resolved), modo dual (Simple/Avanzado), evidencias observables, acciones explícitas de exportación JSON/CSV con `ForensicExporter` y estados vacíos/error.
-  - [ ] **Subtarea 5.4: Conexión de Controladores Asíncronos en `src/main.rs` e i18n:**
-    - Handlers de refresco y escaneo manual sin bloqueos de renderizado.
+  - [x] **Subtarea 5.4: Conexión de Controladores Asíncronos en `src/main.rs` e i18n (EJECUTADO):**
+    - Handlers de auto-carga en navegación de pestañas (`on_tab_changed`) para Network Guardian (tab 5) e Incident Center (tab 6).
+    - Handlers de escaneo manual y refresco reactivo sin bloqueo de la UI (`refresh-net-devices`, `scan-net-devices`, `refresh-wifi`, `refresh-link-quality`, `refresh-net-connections`).
+    - Handlers de gestión y exportación de incidentes PIE (`refresh-pie-incidents`, `pie-filter-changed`, `export-pie-forensic-json`, `export-pie-forensic-csv`) con diálogo nativo `rfd`.
+    - Tarea Tokio en segundo plano con sondeo de calidad de red periódico (15s) actualizando en vivo el panel de enlace.
+    - Adaptadores Slint (`map_*_to_slint`) y claves i18n en Fluent (`locales/es-AR/main.ftl` y `locales/en/main.ftl`).
 
 ---
 

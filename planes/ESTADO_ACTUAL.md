@@ -1,7 +1,7 @@
 # SysPulse — Documento Permanente de Estado y Continuidad de Contexto
 
 **Ubicación:** `planes/ESTADO_ACTUAL.md`  
-**Última actualización:** 21 de noviembre de 2026 (Subtarea 5.1 SocketCorrelator completada y pusheada [SHA `a848b15`]; Subtarea 5.2 NetworkGuardianTab completada en Slint; 109 tests unitarios pasando; Próxima tarea a autorizar: Subtarea 5.3 Centro de Incidentes PIE)
+**Última actualización:** 21 de noviembre de 2026 (Fase 5 completada: Subtarea 5.1 SocketCorrelator [SHA `a848b15`]; Subtarea 5.2 NetworkGuardianTab Slint [SHA `09134f6`]; Subtarea 5.3 PieIncidentsTab Slint [SHA `8a7b504`]; Subtarea 5.4 Controladores asíncronos en main.rs e i18n implementados; 109 tests unitarios pasando; Fase 5 concluida)
 **Rama activa:** `review/a11-block-2b` (en desarrollo sobre base `develop/v0.4.0`)
 **Versión de producción:** v0.3.1 (Setup oficial generado: `output/SysPulse-Setup-0.3.1.exe`)  
 **Versión en desarrollo:** v0.4.0 (PIE Core & Network Guardian)  
@@ -26,8 +26,8 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 | **Process Hunter** | ✅ Completado | Registro forense continuo en SQLite (`syspulse.db`), cálculo de tiempo de vida en procesos transitorios (< 5s), purga horaria y exportación a JSON/CSV. Emisión de eventos a PIE (`ProcessSpawned`, `UntrustedExecutionLocation`, `TransientProcessDetected`). |
 | **System Tray & Ajustes** | ✅ Completado | Minimizar a bandeja, autoarranque en Registro (`HKCU\...\Run`), detección robusta de `icon.ico`. Retención de métricas de red configurable (`net_metrics_retention_days`). |
 | **Instalador Oficial** | ✅ Completado | Compilado con Inno Setup 7 (`SysPulse-Setup-0.3.1.exe`, ~7.2 MB). |
-| **Pulse Intelligence Engine (PIE)** | ✅ Fase 0 y Fase 4 Completadas (Subtareas 4.1 a 4.4) | Event Bus centralizado con canal `broadcast(256)` y `mpsc(1024)`. Esquema SQLite versionado (`PRAGMA user_version = 3`) con clave compuesta `(network_id, mac)`, `correlation_key`, `last_updated` e índices compuestos. Motor de correlación heurística en tiempo real con 7 reglas prioritarias respaldadas 100% por productores reales, confirmación de condiciones sostenidas, histéresis, deduplicación entre reinicios, debouncing de evidencias (10s), resolución automática y explicabilidad Modo Simple/Avanzado bilingüe Fluent. Exportador forense unificado (Subtarea 4.4) a JSON estructurado y CSV RFC 4180 de incidentes y evidencias para análisis de IA local/offline con ordenamiento determinista. 33 tests de PIE ok (27 de reglas/persistencia + 6 de exportación forense; 98 en workspace). |
-| **Network Guardian** | ✅ Fases 1, 2 y 3 Completadas; Fase 5 Subtareas 5.1 y 5.2 Implementadas | Detección de interfaces físicas/virtuales (`GetAdaptersAddresses`), sondeo ICMP nativo sin UAC, RTT, Jitter RFC 3550 y Packet Loss. `WifiAnalyzer` nativo (`wlanapi.dll`): diagnóstico completo, detección de redes inseguras, matriz de congestión ponderada por RSSI y recomendación explicable. `DeviceScanner`: descubrimiento pasivo ARP kernel, escáner activo SendARP acotado (máx 25 req/s), resolución de hostnames con pool acotado (`Semaphore(4)` + `JoinSet`), base OUI oficial IEEE con detección estricta LAA. `SocketCorrelator`: vinculación nativa Win32 de sockets TCP/UDP con PIDs y procesos de Process Hunter (`GetExtendedTcpTable`/`GetExtendedUdpTable`). `NetworkGuardianTab` en Slint con 4 sub-pestañas operativas (Dispositivos, Wi-Fi Analyzer, Calidad de Enlace y Conexiones) y estados de carga, vacío, error y no disponible. 29 tests de red ok (109 en workspace). |
+| **Pulse Intelligence Engine (PIE)** | ✅ Fase 0, Fase 4 y Fase 5 (UI Incidents & Export) Completadas | Event Bus centralizado con canal `broadcast(256)` y `mpsc(1024)`. Esquema SQLite versionado (`PRAGMA user_version = 3`) con clave compuesta `(network_id, mac)`, `correlation_key`, `last_updated` e índices compuestos. Motor de correlación heurística en tiempo real con 7 reglas prioritarias respaldadas 100% por productores reales, confirmación de condiciones sostenidas, histéresis, deduplicación entre reinicios, debouncing de evidencias (10s), resolución automática y explicabilidad Modo Simple/Avanzado bilingüe Fluent. Exportador forense unificado (Subtarea 4.4) a JSON estructurado y CSV RFC 4180 de incidentes y evidencias para análisis de IA local/offline con ordenamiento determinista. Centro de Incidentes en Slint (`PieIncidentsTab`) y controladores asíncronos reactivos en `main.rs` con filtrado y exportación de archivos bajo demanda. 33 tests de PIE ok (27 de reglas/persistencia + 6 de exportación forense; 98 en workspace). |
+| **Network Guardian** | ✅ Fases 1, 2, 3 y 5 Completadas (Subtareas 5.1, 5.2 y 5.4) | Detección de interfaces físicas/virtuales (`GetAdaptersAddresses`), sondeo ICMP nativo sin UAC, RTT, Jitter RFC 3550 y Packet Loss. `WifiAnalyzer` nativo (`wlanapi.dll`): diagnóstico completo, detección de redes inseguras, matriz de congestión ponderada por RSSI y recomendación explicable. `DeviceScanner`: descubrimiento pasivo ARP kernel, escáner activo SendARP acotado (máx 25 req/s), resolución de hostnames con pool acotado (`Semaphore(4)` + `JoinSet`), base OUI oficial IEEE con detección estricta LAA. `SocketCorrelator`: vinculación nativa Win32 de sockets TCP/UDP con PIDs y procesos de Process Hunter (`GetExtendedTcpTable`/`GetExtendedUdpTable`). `NetworkGuardianTab` en Slint con 4 sub-pestañas operativas (Dispositivos, Wi-Fi Analyzer, Calidad de Enlace y Conexiones) y controladores asíncronos en `main.rs` sin bloqueos de renderizado. 29 tests de red ok (109 en workspace). |
 
 ---
 
@@ -78,7 +78,7 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
   - Correlación asíncrona no bloqueante con procesos activos (`sysinfo`) e histórico SQLite de Process Hunter (`process_events`) para procesos recientemente finalizados.
   - Manejo seguro de procesos extintos, reutilización de PIDs y metadatos no disponibles sin inventar nombres ni estados (`Option::None` ante inaccesibilidad).
   - 5 pruebas unitarias específicas (decodificación de puertos/IPs, mapeos TCP, correlación en vivo/histórico y ejecución nativa en vivo sin UAC).
-- **Fase 5: Subtarea 5.2 (Pestaña Slint `NetworkGuardianTab` - EJECUTADO):**
+- **Fase 5: Subtarea 5.2 (Pestaña Slint `NetworkGuardianTab` - EJECUTADO [SHA `09134f6`]):**
   - Componente Slint `NetworkGuardianTab` con 4 sub-pestañas operativas (`TabPill`):
     1. **Dispositivos:** Inventario ARP con `display-name`, IP/MAC, fabricante, badges de confianza (`Confiable`, `Desconocido`, `Router`, `Este PC`) y último avistamiento.
     2. **Wi-Fi Analyzer:** Información de conexión activa (SSID, canal, señal dBm/%, protocolo PHY, seguridad) y mapa de congestión de canales circundantes con recomendaciones explicables.
@@ -86,6 +86,20 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
     4. **Conexiones:** Tabla interactiva de sockets activos con protocolo, endpoint local, endpoint remoto, estado TCP y proceso asociado (nombre, PID y estado vivo/cerrado).
   - Manejo integral de estados visuales: escaneo/carga (`is-scanning`, `is-loading`), listas vacías (`devices.length == 0`, `connections.length == 0`), adaptador no disponible o desconectado y reportes de error.
   - Contratos de UI adaptados en `ui_adapter.rs` (`UiSocketConnection`, `map_correlated_socket`) y 6 pruebas unitarias (109 tests totales).
+- **Fase 5: Subtarea 5.3 (Centro de Incidentes Slint `PieIncidentsTab` - EJECUTADO [SHA `8a7b504`]):**
+  - Componente Slint `PieIncidentsTab` con arquitectura master-detail neón:
+    1. Barra superior con filtros de estado (Todos, Activos, Resueltos), selector de vista (Simple / Avanzada) y botones de acción (Actualizar, Exportar JSON, Exportar CSV).
+    2. Lista master con tarjetas interactivas de incidentes, badges de severidad (`CRÍTICO`, `ALTO`, `MEDIO`, `INFO`), estado y contador de evidencias.
+    3. Panel de detalle reactivo con explicabilidad en Modo Simple (resumen y recomendaciones claras) y Modo Avanzado (ID de regla técnica, impacto, mitigación técnica y limitaciones diagnósticas).
+    4. Sub-lista de evidencias observables cronológicas con JSON formateado y origen.
+    5. Manejo visual de estados: banners de carga, error y estado vacío cuando todos los subsistemas operan dentro de parámetros normales.
+- **Fase 5: Subtarea 5.4 (Controladores Asíncronos en `src/main.rs` e i18n - EJECUTADO):**
+  - Handlers de auto-carga en cambio de pestañas (`ui.on_tab_changed`): carga pasiva y sin tráfico de red del inventario ARP y calidad de enlace al entrar a Network Guardian (tab 5), y carga de incidentes al entrar a Incident Center (tab 6).
+  - Callbacks operativos de Network Guardian: `refresh-net-devices` (escaneo pasivo), `scan-net-devices` (escaneo activo no invasivo con feedback visual de progreso), `refresh-wifi` (diagnóstico de canales y señal), `refresh-link-quality` (latencia, jitter y pérdida de paquetes) y `refresh-net-connections` (correlación nativa Win32 de sockets TCP/UDP con procesos).
+  - Callbacks operativos de PIE Incidents: `refresh-pie-incidents` (recarga reactiva con filtro), `pie-filter-changed` (filtrado dinámico 0/1/2) y exportación forense asíncrona de incidentes y evidencias a JSON y CSV (`export-pie-forensic-json`, `export-pie-forensic-csv`) con diálogo nativo de guardado `rfd` y mensajes de estado en UI.
+  - Tarea periódica Tokio en segundo plano para sondeo no invasivo de latencia de red (cada 15s) actualizando en vivo el panel de calidad de enlace sin micro-congelamientos.
+  - Funciones de adaptación de modelos de dominio a estructuras generadas por Slint (`map_*_to_slint`).
+  - Claves de internacionalización añadidas en Fluent (`locales/es-AR/main.ftl` y `locales/en/main.ftl`) para conexiones y exportación forense.
 
 ---
 
@@ -186,9 +200,14 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 1. Leer directamente este archivo (`planes/ESTADO_ACTUAL.md`), [AGENTS.md](file:///D:/proyectos/SysPulse/AGENTS.md) y [planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md).
 2. **Rama activa:** Mantenerse en `review/a11-block-2b` (o la rama indicada por el usuario).
-3. **Próxima tarea a autorizar:** **Fase 5: Subtarea 5.4** (Controladores Asíncronos en main.rs e integración i18n Fluent).
-4. **Subtareas completadas:** Subtarea 5.1 (`SocketCorrelator`, SHA `a848b15`), Subtarea 5.2 (`NetworkGuardianTab` en Slint, SHA `09134f6`) y Subtarea 5.3 (`PieIncidentsTab` en Slint, implementada sin commit) con 109 tests unitarios pasando.
-5. No realizar commit ni push de la Subtarea 5.3 sin autorización previa del usuario.
+3. **Estado de Fase 5:** **Fase 5 Completada al 100%** (Subtareas 5.1 a 5.4 implementadas y probadas con 109 tests unitarios pasando, 0 errores de compilación y 0 errores de clippy).
+4. **Subtareas completadas:**
+   - Subtarea 5.1 (`SocketCorrelator`, SHA `a848b15`).
+   - Subtarea 5.2 (`NetworkGuardianTab` en Slint, SHA `09134f6`).
+   - Subtarea 5.3 (`PieIncidentsTab` en Slint, SHA `8a7b504`).
+   - Subtarea 5.4 (Controladores asíncronos en `src/main.rs`, adaptadores Slint e i18n Fluent, implementada sin commit).
+5. **Próxima acción a autorizar por el usuario:** Autorización para realizar `git commit` de la Subtarea 5.4, o proceder a la siguiente fase priorizada según [PLAN_DE_ACCION.md](file:///D:/proyectos/SysPulse/planes/PLAN_DE_ACCION.md) (Prioridad 6: ETW en Windows / Prioridad 7: Features v0.4.0+ / Pruebas de campo con UI Slint).
+6. No realizar commit ni push sin autorización explícita previa del usuario (Directiva Permanente 10).
 
 ---
 

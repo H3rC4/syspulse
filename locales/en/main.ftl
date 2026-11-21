@@ -120,6 +120,9 @@ net-link-gateway = Gateway Latency
 net-link-internet = Internet Latency
 net-link-jitter = Jitter
 net-link-loss = Packet Loss
+net-tab-connections = Connections
+net-connections-empty = No active network connections recorded.
+net-connections-loading = Loading active network connections...
 
 # Pulse Intelligence Engine (PIE)
 tab-pie-incidents = Incident Center
@@ -138,4 +141,6 @@ pie-rule-high-cpu-title = An Application is Overloading the Processor
 pie-rule-mem-pressure-title = System Physical Memory is Nearly Full
 pie-rule-sys-saturation-title = System Operating at Hardware Limits
 pie-rule-temp-exec-title = Unverified Application Executing from Temp Directory
+pie-export-success = Forensic report exported successfully to { $path }
+pie-export-error = Error exporting forensic report: { $error }
 
