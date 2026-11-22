@@ -1,8 +1,8 @@
 # SysPulse — Documento de Diseño y Arquitectura: Network Guardian
 
 **Módulo:** Network Guardian (Monitoreo, Diagnóstico y Seguridad de Red)  
-**Fecha:** 14 de noviembre de 2026  
-**Estado:** Propuesta de Arquitectura Técnica (Pendiente de Aprobación)  
+**Fecha:** 22 de noviembre de 2026  
+**Estado:** Fases 0 a 5 Implementadas; Observaciones de Campo en GUI Windows Verificadas (22 de noviembre de 2026)  
 **Versión objetivo:** SysPulse v0.4.0  
 
 ---
@@ -264,14 +264,21 @@ La pestaña contará con 4 secciones internas seleccionables con *TabPills*:
    - Tabla estilizada con lista de dispositivos detectados: Estado (Online/Offline), IP, MAC, Hostname, Fabricante y badge neón (*Confiable / Desconocido*).
    - Botón de escaneo rápido de red (*"Escanear Red"*).
    - Botón contextual para marcar como confiable o editar el alias del dispositivo.
+   - **Mejoras identificadas en pruebas de campo:**
+     - **NG-01:** Optimizar descubrimiento activo sin depender únicamente de la caché ARP local existente en el kernel (caso de dispositivos como iPhones alcanzables que no emiten tráfico previo).
+     - **NG-02:** Separar en la interfaz dispositivos conocidos de confirmados y no confirmados/offline; evitar clasificar como offline tras un solo sondeo fallido y mostrar marcas de tiempo `last_seen`.
+     - **NG-03:** Soporte para alias personalizados persistentes e identificación unívoca para direcciones MAC administradas localmente (LAA) o privadas/rotativas.
 2. **Wi-Fi & Canales (`Wi-Fi Analyzer`):**
    - Tarjeta con detalles de la conexión actual: SSID, Intensidad de Señal con barra de progreso Neón Cyan, Canal actual, Frecuencia y Cifrado.
-   - **Gráfico de Congestión de Canales:** Visualización en barras verticales neón indicando la saturación de cada canal (2.4 GHz y 5 GHz) y recomendación del mejor canal disponible.
+   - **Gráfico de Congestión de Canales:** Visualización en barras verticales neón indicando la saturación de cada canal y recomendación del mejor canal disponible.
+   - **Recomendación por banda:** Distinguir explícitamente las recomendaciones de canales entre las bandas de 2.4 GHz y 5 GHz.
 3. **Calidad de Enlace (`Link Quality`):**
    - Indicadores numéricos de Latencia (Gateway e Internet), Jitter y Pérdida de paquetes.
    - Historial de latencia en sparkline de los últimos 60 segundos.
+   - Formateo adecuado de Jitter sin decimales excesivos.
 4. **Tráfico por Proceso (`Process Network`):**
    - Vista integrada con Process Hunter: listado de procesos locales con sockets abiertos, puertos locales y destinos remotos.
+   - Corrección de badges de estado: diferenciar sockets en estado `LISTEN` (`Listening` / `Escuchando`) de conexiones activas establecidas.
 
 ---
 
@@ -348,6 +355,21 @@ flowchart LR
 ---
 
 ## 9. Criterios de Aceptación y Pruebas (Testing)
+
+### 9.1. Resultados de Pruebas de Campo en GUI Windows (22 de noviembre de 2026)
+
+- **Verificado con Éxito (PASSED):**
+  - Sub-pestañas Dispositivos, Wi-Fi Analyzer, Calidad de Enlace y Conexiones (sockets TCP/proceso) desplegadas y operando con datos reales de la red local.
+  - Latencias de Gateway e Internet, Jitter RFC 3550 y Packet Loss medidos y presentados en tiempo real.
+  - Correlación nativa Win32 de sockets activos con procesos locales mediante `GetExtendedTcpTable` validada en vivo.
+- **Hallazgos y Mejoras Identificadas (PENDING / OBSERVED):**
+  - **NG-01:** Descubrimiento pasivo omitió iPhone alcanzable (`192.168.1.12`) hasta emisión de ping y refresco; optimizar descubrimiento activo para no depender de la caché ARP existente.
+  - **NG-02:** Separar conocidos de confirmados y no confirmados/offline; evitar asumir offline por una sonda fallida; registrar y mostrar marcas de tiempo `last_seen`.
+  - **NG-03:** Soportar alias personalizados persistentes e identificación para direcciones MAC privadas/LAA.
+  - **Wi-Fi:** Diferenciar explícitamente las recomendaciones de canales para las bandas 2.4 GHz y 5 GHz.
+  - **Sockets:** Corregir badges engañosos `"Active"` en sockets `LISTEN` (deben reflejar estado de escucha).
+
+### 9.2. Criterios Formales de Validación:
 
 1. **Pruebas de Funcionalidad:**
    - La tabla de dispositivos debe detectar correctamente el Gateway (router) y al menos los dispositivos activos conocidos en la red Wi-Fi o Ethernet de prueba.

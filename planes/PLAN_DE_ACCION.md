@@ -1,9 +1,9 @@
 # SysPulse — Plan de Acción Único y Consolidado
 
 **Documento Único de Referencia y Hoja de Ruta**  
-**Fecha de actualización:** 13 de noviembre de 2026  
-**Versión actual:** v0.3.1 (en preparación de release)  
-**Idioma principal:** Español (Argentina / Neutro) — *Soporte multi-idioma (Inglés) pospuesto para actualización futura.*  
+**Fecha de actualización:** 22 de noviembre de 2026  
+**Versión actual:** v0.4.0 (en estabilización y resolución de observaciones de campo; producción actual: v0.3.1)  
+**Idioma principal:** Soporte bilingüe Fluent (`es-AR` / `en`) — *Modo Dual Simple / Avanzado integrado.*  
 **Repositorio oficial:** [https://github.com/H3rC4/syspulse](https://github.com/H3rC4/syspulse)  
 
 ---
@@ -40,6 +40,13 @@ Todo lo listado a continuación ha sido corregido, integrado y verificado con `c
 - [x] **Seguridad de Handles Win32:** Cierre garantizado de claves de Registro (`RegCloseKey`) y handles de procesos (`CloseHandle`).
 - [x] **Script de Instalador Corregido:** `installer.iss` reparado para compatibilidad con Inno Setup (llamadas HTTP mediante OLE `WinHttp.WinHttpRequest.5.1` y corrección sintáctica de funciones).
 - [x] **Rutas Robustas para el Icono de Bandeja:** Detección automática de `icon.ico` tanto en entorno de desarrollo como en la carpeta de instalación.
+- [x] **Pruebas de Campo en GUI Windows (22 de noviembre de 2026 - PASSED):**
+  - Arranque fluido y sin cuelgues tras el fix de manifiesto v1 sobredimensionado (`MAX_MIGRATABLE_V1_ENTRIES = 1000`).
+  - Network Guardian: datos reales verificados en Dispositivos, Wi-Fi Analyzer, Calidad de Enlace y correlación Win32 de sockets TCP con procesos.
+  - Centro de Incidentes PIE: apertura funcional y exportaciones forenses vacías a JSON y CSV operativas.
+  - System Monitor: actualización fluida de valores de CPU, memoria RAM y rendimiento de red.
+  - Process Hunter: registro en vivo de procesos del sistema y exportación JSON funcional (comprobado con `PING.EXE`).
+  - CPU Focus: listado de procesos en pantalla y botón *Refresh* reactivo.
 
 ---
 
@@ -49,12 +56,11 @@ Este es el único roadmap activo a seguir para las próximas sesiones de trabajo
 
 ```mermaid
 flowchart TD
-    Paso1["1. Depurar Cargo.toml [x]<br>(Limpiar dependencias inactivas)"] --> Paso2["2. Build Release + Instalador [x]<br>(cargo build --release + Inno Setup)"]
-    Paso2 --> Paso3["3. Testing y Publicación v0.3.1<br>(Prueba en Windows + Tag en GitHub)"]
-    Paso3 --> Paso4["4. Pre-hashing en Duplicados [x]<br>(Optimizar E/S para archivos grandes)"]
-    Paso4 --> Paso5["5. Network Guardian (v0.4.0)<br>(Diagnóstico de red, Wi-Fi, ARP e IA)"]
-    Paso5 --> Paso6["6. Migración ETW en Windows<br>(Reemplazar polling de sysinfo)"]
-    Paso6 --> Paso7["7. Funcionalidades v0.4.0+<br>(Gráficos en tiempo real, Toasts, Multi-idioma)"]
+    Paso1["Fases Previas: Infraestructura & PIE Core [x]<br>(Event Bus, Persistencia & Correlación)"] --> Paso2["Fase 5: UI Slint Neón & Sockets [x]<br>(Tabs, Incidentes & Correlación Win32)"]
+    Paso2 --> Paso3["1. Consolidación Hallazgos de Campo [ ]<br>(Bugs SM-01, CF-01, UI, NG-01..03, Seg)"]
+    Paso3 --> Paso4["2. Simplificación Smart Cleaner [ ]<br>(Manual, no-destructivo primero, sin auto-purga ni migración)"]
+    Paso4 --> Paso5["3. Validación y Release v0.4.0 [ ]<br>(Resolución bloqueantes, build release e instalador)"]
+    Paso5 --> Paso6["4. Trabajo Diferido Post-v0.4.0 [ ]<br>(ETW Process Hunter, Early-start & Futuras)"]
 ```
 
 ---
@@ -224,14 +230,58 @@ flowchart TD
 
 ---
 
-### 🟢 Prioridad 6: Migración de Process Hunter a ETW en Windows
-*Propósito: Reducir a 0% el uso de CPU en reposo de la auditoría de procesos.*
+---
 
-- [ ] Sustituir el bucle de polling de `sysinfo` (cada 500 ms) en Windows por un consumidor de eventos del kernel vía **Event Tracing for Windows (ETW)** para recibir notificaciones instantáneas de creación y finalización de procesos por hardware/kernel.
+### 🔴 Prioridad Inmediata 6: Consolidación y Resolución de Observaciones de Campo v0.4.0 (22 de noviembre de 2026)
+*Propósito: Subsanar defectos confirmados, verificar restricciones de seguridad y registrar mejoras identificadas en pruebas de campo en Windows.*
+
+- [ ] **Defectos Confirmados (Bugs):**
+  - **SM-01:** Corregir rotulado del volumen D: que solo muestra `"Volume"`; mostrar letra de unidad junto con la etiqueta (ej. `D: [Etiqueta]`). La unidad C: funciona correctamente.
+  - **CF-01:** Investigar y corregir muestreo en CPU Focus que reporta `0.0%` en todos los procesos de la lista tras refrescar.
+  - **UI:** Resolver defectos de interfaz visual: espaciado excesivo, etiquetas y botones recortados, textos mezclados inglés/español (i18n), formateo crudo de Rust `Some(...)`, decimales excesivos en Jitter, badges engañosos `"Active"` en sockets `LISTEN` (deben reflejar escucha/pasivo), y actualizar versión desactualizada `v0.3.1` para reflejar `v0.4.0`.
+  - **SET-01..05:** Resolver hallazgos de Ajustes: flujo de reinicio por idioma (SET-01), exclusión de modo claro/oscuro (SET-02), slider de retención pausado A11.09 (SET-03), borrado permanente seguro a papelera R10 (SET-04) y corrección de versión `0.1.0` a `v0.4.0` (SET-05).
+- [ ] **Validaciones Pendientes (Observaciones):**
+  - **SM-02:** Verificar y validar consumo sostenido de CPU y overhead en reposo de SysPulse (< 0.5% en reposo con sondeo periódico).
+  - **PIE:** Validar exportación forense a JSON/CSV con datos reales o descartables no vacíos de incidentes y evidencias; un estado de incidentes vacío no debe interpretarse como salud comprobada del sistema.
+- [ ] **Mejoras Propuestas (Network Guardian):**
+  - **NG-01:** Optimizar el descubrimiento activo de dispositivos para no depender exclusivamente de la caché ARP existente en el kernel (caso iPhone `192.168.1.12` omitido hasta `ping` y refresco).
+  - **NG-02:** Separar en la UI los dispositivos conocidos de los actualmente confirmados y no confirmados/offline; no marcar offline por un único sondeo fallido; mostrar marcas de tiempo `last_seen`.
+  - **NG-03:** Soportar alias personalizados por el usuario con persistencia e identificación robusta, incluyendo direcciones MAC administradas localmente (LAA) o privadas/rotativas.
+  - **NG (Wi-Fi):** Diferenciar explícitamente las recomendaciones de canales entre las bandas de 2.4 GHz y 5 GHz.
+- [ ] **Directivas de Seguridad Permanentes:**
+  - **Preservación de Cuarentena:** Preservar íntegramente los datos y archivos de usuario en cuarentena. Prohibido ejecutar pruebas de limpieza destructivas sobre archivos reales.
+  - **CF-02:** Verificar y garantizar restricciones estrictas en backend que impidan elevar prioridad (*Focus*) a procesos críticos de Windows antes de permitir cualquier acción de usuario.
 
 ---
 
-### 🟢 Prioridad 7: Funcionalidades Futuras (v0.4.0+)
+### 🔴 Prioridad 7: Simplificación de Smart Cleaner (Manual y No-Destructivo Primero)
+*Propósito: Reducir complejidad y superficie de riesgo en operaciones de disco.*
+
+- [ ] **Directiva de Simplificación de Smart Cleaner:**
+  - Simplificar Smart Cleaner a una utilidad básica, manual y orientada a "no-destructivo primero".
+  - Mantener los datos de cuarentena y copias de seguridad legadas plenamente recuperables.
+  - No eliminar ni migrar automáticamente datos o manifiestos existentes sin intervención y confirmación explícita del usuario.
+
+---
+
+### 🟡 Prioridad 8: Validación de Release v0.4.0 en Windows, Build y Empaquetado
+*Propósito: Certificar estabilidad final, generar binarios optimizados y validar experiencia de instalación.*
+
+- [ ] **Resolución de Bloqueantes:** Resolver los defectos confirmados de release y validar v0.4.0 en entornos reales Windows 10/11.
+- [ ] **Compilación Release:** Ejecutar `cargo build --release` optimizado.
+- [ ] **Empaquetado Oficial:** Actualizar `installer.iss` a la versión `0.4.0` y compilar instalador con Inno Setup 7 (`SysPulse-Setup-0.4.0.exe`).
+- [ ] **Pruebas de Instalación Limpia:**
+  - Instalar en máquina de prueba limpia sin dependencias previas.
+  - Validar inicio de la aplicación, accesos directos, icono de bandeja y ejecución con `--background`.
+
+---
+
+### 🟢 Prioridad 9: Trabajo Diferido Post-v0.4.0 (Process Hunter ETW y Funcionalidades Futuras)
+*Propósito: Mejoras arquitectónicas mayores programadas para el ciclo posterior a v0.4.0.*
+
+- [ ] **Process Hunter ETW & Early-Start Capture:**
+  - Sustituir el bucle de polling de `sysinfo` (cada 500 ms) en Windows por un consumidor de eventos del kernel vía **Event Tracing for Windows (ETW)** para recibir notificaciones instantáneas de creación y finalización de procesos.
+  - Implementar captura de inicio temprano (early-start capture) de procesos.
 - [ ] **Gráficos en tiempo real:** Mini-gráficos tipo sparkline de los últimos 60 segundos para CPU, RAM y Red en la pestaña Monitor.
 - [ ] **Notificaciones Toast nativas:** Avisos del sistema al completar limpiezas o ante alertas térmicas (> 85°C).
 - [ ] **Modo Portable:** Si existe un archivo `portable.txt` junto al ejecutable, almacenar configuración y bases de datos en la misma carpeta local.

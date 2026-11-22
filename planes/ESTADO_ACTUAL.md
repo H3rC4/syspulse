@@ -1,7 +1,7 @@
 # SysPulse — Documento Permanente de Estado y Continuidad de Contexto
 
 **Ubicación:** `planes/ESTADO_ACTUAL.md`  
-**Última actualización:** 21 de noviembre de 2026 (Fix Prioridad P0: Prevención fail-closed de bloqueo de inicio por manifiesto v1 de cuarentena sobredimensionado; 113 tests unitarios pasando; compilación limpia)
+**Última actualización:** 22 de noviembre de 2026 (Pruebas de campo en GUI de Windows 10/11 verificadas; consolidación de hallazgos observados, bugs confirmados, mejoras propuestas y plan de trabajo v0.4.0; baseline `0dcc5b3`)
 **Rama activa:** `review/a11-block-2b` (en desarrollo sobre base `develop/v0.4.0`)
 **Versión de producción:** v0.3.1 (Setup oficial generado: `output/SysPulse-Setup-0.3.1.exe`)  
 **Versión en desarrollo:** v0.4.0 (PIE Core & Network Guardian)  
@@ -101,6 +101,38 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
   - Funciones de adaptación de modelos de dominio a estructuras generadas por Slint (`map_*_to_slint`).
   - Claves de internacionalización añadidas en Fluent (`locales/es-AR/main.ftl` y `locales/en/main.ftl`) para conexiones y exportación forense.
 
+### 3.2. Observaciones de Pruebas de Campo en GUI Windows (22 de noviembre de 2026)
+
+Se registraron y verificaron formalmente las siguientes observaciones durante las pruebas de campo sobre la interfaz gráfica en Windows 10/11:
+
+#### A. Funcionalidades Verificadas y Superadas (PASSED):
+- **Arranque del sistema:** La aplicación inicia correctamente tras la corrección del bloqueo por manifiesto v1 sobredimensionado (`MAX_MIGRATABLE_V1_ENTRIES = 1000`).
+- **Network Guardian:** Las sub-pestañas Dispositivos, Wi-Fi Analyzer, Calidad de Enlace y Conexiones (correlación de sockets TCP/proceso) muestran datos reales del entorno.
+- **Centro de Incidentes (PIE):** La pestaña abre adecuadamente; las funciones de exportación forense vacía a JSON y CSV operan sin errores ni bloqueos.
+- **System Monitor:** Actualiza en tiempo real y con fluidez los valores de CPU global, memoria RAM y métricas de tráfico de red.
+- **Process Hunter:** Registra procesos reales del sistema en tiempo de ejecución y exporta correctamente eventos a JSON (comprobado con `PING.EXE`).
+- **CPU Focus:** Muestra la lista de procesos activos y el botón *Refresh* actualiza el listado.
+
+#### B. Hallazgos Pendientes y Observaciones de Campo (PENDING / OBSERVED):
+- **NG-01 (Mejora propuesta / Descubrimiento de red):** El descubrimiento inicial de dispositivos no detectó un iPhone alcanzable (`192.168.1.12`); apareció únicamente tras emitir un `ping` desde Windows que pobló la tabla ARP del kernel y refrescar la UI. Es necesario optimizar el descubrimiento activo sin depender únicamente de la caché ARP existente.
+- **NG-02 (Mejora propuesta / Estado y clasificación):** Separar con claridad los dispositivos conocidos de los actualmente confirmados y los no confirmados / fuera de línea. Evitar marcar un dispositivo como "offline" basándose únicamente en una sonda fallida; mostrar marcas de tiempo del último avistamiento (`last_seen`).
+- **NG-03 (Mejora propuesta / Identificación y persistencia):** Proveer soporte persistente para alias de dispositivo personalizados por el usuario e identificación unívoca, incluyendo direcciones MAC administradas localmente (LAA) o privadas/rotativas.
+- **SM-01 (Defecto confirmado / UI & Backend):** El volumen `D:` se rotula únicamente como `"Volume"`; debe mostrarse la letra de unidad junto a la etiqueta (ej. `D: [Etiqueta]`). La unidad `C:` funciona correctamente.
+- **SM-02 (Observación / Validación pendiente):** Verificar y medir rigurosamente el consumo sostenido de CPU y el overhead en reposo de SysPulse (< 0.5% en reposo con sondeo periódico).
+- **CF-01 (Defecto confirmado / Muestreo de CPU):** CPU Focus muestra `0.0%` de CPU para todos los procesos visibles, incluso tras pulsar *Refresh*; se requiere investigar el muestreo y cálculo de uso de CPU por proceso.
+- **CF-02 (Seguridad / Backend):** Verificar y certificar restricciones en backend contra la elevación de prioridad (*Focus*) de procesos críticos del sistema operativo Windows antes de permitir cualquier acción de usuario.
+- **UI (Defectos de presentación y usabilidad):**
+  - Corregir espaciado excesivo entre componentes visuales.
+  - Corregir etiquetas y botones recortados por límites rígidos de contenedor.
+  - Subsanar mezcla de idiomas (inglés y español) en vistas y textos.
+  - Eliminar formateo crudo de Rust como `Some(...)` en la interfaz.
+  - Redondear decimales excesivos en métricas de Jitter.
+  - Corregir badges engañosos `"Active"` en sockets que se encuentran en estado `LISTEN` (deben mostrarse como `Escuchando` / `Listening`).
+  - Actualizar el indicador de versión en la UI que aún muestra `v0.3.1` (debe reflejar `v0.4.0`).
+- **PIE (Observación / Validación pendiente):** La exportación forense de incidentes y evidencias con datos reales o descartables no vacíos permanece sin verificar; un estado de incidentes vacío no debe interpretarse como prueba de salud comprobada del sistema.
+- **NG (Mejora propuesta / Wi-Fi):** Las recomendaciones de canales Wi-Fi deben diferenciar explícitamente entre las bandas de 2.4 GHz y 5 GHz.
+- **Seguridad (Directiva permanente):** Preservar íntegramente los datos de usuario en cuarentena. Prohibido ejecutar pruebas destructivas de limpieza sobre archivos reales.
+
 ---
 
 ## 4. Resultados de Validación Técnica
@@ -199,32 +231,70 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 ## 8. Instrucciones Exactas para Retomar en la Próxima Sesión
 
 1. Leer directamente este archivo (`planes/ESTADO_ACTUAL.md`), [AGENTS.md](file:///D:/proyectos/SysPulse/AGENTS.md) y [planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md).
-2. **Rama activa:** Mantenerse en `review/a11-block-2b` (o la rama indicada por el usuario).
+2. **Rama activa:** Mantenerse en `review/a11-block-2b` (o la rama indicada por el usuario). Baseline: `0dcc5b3`.
 3. **Estado del proyecto:** **113 tests unitarios pasando** (0 fallos, 0 errores en `cargo check`).
 4. **Fix P0 Implementado (Smart Cleaner / Startup Blocker):**
    - Detección de manifiestos v1 sobredimensionados (`MAX_MIGRATABLE_V1_ENTRIES = 1000`, `MAX_MIGRATABLE_V1_BYTES = 1024 * 1024`).
    - Omisión de la migración automática y transición a modo degradado en < 1 ms para evitar el bloqueo del hilo principal de Slint.
    - Preservación íntegra de `manifest.json`, `manifest.v1.bak` y los archivos físicos en cuarentena.
    - Operaciones de cuarentena deshabilitadas fail-closed en modo degradado; resto de módulos 100% operativos.
-   - 2 pruebas de regresión añadidas (`test_oversized_v1_manifest_entries_skips_migration_and_degrades_safely`, `test_oversized_v1_manifest_bytes_skips_migration_and_degrades_safely`).
-5. **Próximas acciones a autorizar por el usuario:**
-   - **Opción 1 (Resolución de Hallazgos Residuales Auditados):** Subsanar los 3 hallazgos residuales contrastados de la auditoría externa v0.4.0:
-     - **A02:** Desacoplar la emisión de telemetría de `SysMonitor` respecto a la pestaña activa (actualmente dentro de `if ui.get_current_tab() == 0`, lo que silencia a PIE en reposo o minimizado en bandeja).
-     - **A04:** Filtrar la tabla ARP del kernel en `read_arp_table_native` por la subred/interfaz activa para ignorar adaptadores virtuales ajenos.
-     - **A12:** Transacción conjunta SQLite (`tx.transaction()`) al persistir incidente y sus evidencias observables en `persist_incident`.
-   - **Opción 2 (Prioridad 6 del Plan de Acción):** Migración de Process Hunter a ETW en Windows para eliminar el bucle de polling de `sysinfo`.
-   - **Opción 3 (Integración y Pruebas):** Merge de `review/a11-block-2b` hacia `develop/v0.4.0` y ejecución de pruebas manuales con la UI Slint.
-6. No realizar commit ni push sin autorización explícita previa del usuario (Directiva Permanente 10).
+   - Verificado con 2 pruebas de regresión automáticas y ratificado en pruebas de campo en Windows (2026-11-22).
+5. **Plan Inmediato de Trabajo (PLANNED NEXT):**
+   1. **Consolidar y priorizar problemas verificados en campo:** Abordar defectos funcionales (`SM-01`, `CF-01`, interfaz gráfica UI), observaciones y directivas de seguridad.
+   2. **Simplificar Smart Cleaner:** Enfocarlo a una utilidad básica, manual y orientada a "no-destructivo primero". Mantener los datos de cuarentena y copias de seguridad existentes plenamente recuperables; no eliminarlos ni migrarlos automáticamente.
+   3. **Resolver bloqueantes de release y validar v0.4.0 en Windows:** Subsanar los defectos confirmados y validar exhaustivamente la compilación en Windows 10/11.
+   4. **Preparar release build, empaquetado e instalación limpia:** Compilar en modo release, empaquetar instalador con Inno Setup y verificar instalación limpia.
+   5. **Trabajo diferido post-v0.4.0:** Tras culminar el trabajo planificado de v0.4.0, retomar la captura ETW / inicio temprano en Process Hunter y demás mejoras diferidas.
+6. **Seguimiento de Hallazgos Residuales de Auditoría Externa:**
+   - **A02:** Desacoplar la emisión de telemetría de `SysMonitor` respecto a la pestaña activa (actualmente dentro de `if ui.get_current_tab() == 0`, lo que silencia a PIE en reposo o minimizado en bandeja).
+   - **A04:** Filtrar la tabla ARP del kernel en `read_arp_table_native` por la subred/interfaz activa para ignorar adaptadores virtuales ajenos.
+   - **A12:** Transacción conjunta SQLite (`tx.transaction()`) al persistir incidente y sus evidencias observables en `persist_incident`.
+7. No realizar commit ni push sin autorización explícita previa del usuario (Directiva Permanente 10).
 
 ---
 
-## 9. Pruebas Manuales Pendientes (Registradas para Fin de Proyecto con UI Slint)
+## 9. Pruebas Manuales, Observaciones de Campo y Trabajo Diferido
 
-Las siguientes pruebas con hardware real quedan registradas para ejecutarse una vez finalizada la Fase 5 con la interfaz gráfica Slint Neón:
-1. **Conectividad:** Cotejo de RTT y Jitter frente a `ping` nativo en Windows 10/11 y desconexión/reconexión de cable de red.
-2. **Wi-Fi Analyzer:** Cotejo de intensidad de señal (%) y SSID con la bandeja del sistema de Windows, y prueba en Modo Avión.
-3. **Dispositivos:** Escaneo en red doméstica real verificando detección de router, smartphones, consolas y Smart TVs con fabricantes reales y preservación de alias/confianza.
-4. **Usabilidad y Textos Visuales EN / es-AR:** Cotejo exhaustivo visual de cadenas i18n en Modo Simple y Avanzado en ambos idiomas sin truncamientos ni solapamientos tipográficos.
-5. **Estados de Error y Degradación:** Validación visual en UI de estados sin adaptador Wi-Fi, Ethernet desconectado, permisos limitados o Gateway inaccesible.
-6. **Consumo de CPU en Reposo:** Medición rigurosa del uso de procesador en segundo plano verificando cumplimiento estricto (< 0.5% en reposo con sondeo ICMP cada 15s).
-7. **Smart Cleaner:** Verificar en Windows real cuarentena/restauración en mismo volumen y cross-volume, reparse points y recuperación tras cierre forzado, una vez integrada la UI.
+### 9.1. Pruebas de Campo Verificadas en GUI Windows (2026-11-22) — PASSED:
+1. **Inicio de la Aplicación:** La aplicación arranca sin demoras tras el fix del manifiesto v1 sobredimensionado, eliminando el cuelgue en la inicialización de Slint.
+2. **Network Guardian:** Datos reales comprobados en las sub-pestañas Dispositivos, Wi-Fi Analyzer, Calidad de Enlace y Conexiones (correlación Win32 de sockets TCP con procesos).
+3. **Centro de Incidentes (PIE):** Apertura correcta de la interfaz, visualización del estado y exportación de archivos JSON y CSV vacíos plenamente operativa.
+4. **System Monitor:** Métricas de CPU global, memoria RAM y rendimiento de red actualizándose dinámicamente en vivo.
+5. **Process Hunter:** Registro de procesos del sistema en tiempo de ejecución y exportación forense a JSON funcional (validado con `PING.EXE`).
+6. **CPU Focus:** Lista de procesos visualizada y botón *Refresh* reactivo actualizando la lista.
+
+### 9.2. Defectos Confirmados en Pruebas de Campo (BUGS VERIFICADOS):
+1. **SM-01 (Volumen D: sin letra):** El volumen D: aparece rotulado únicamente como `"Volume"`; corregir para mostrar la letra de unidad junto a la etiqueta (ej. `D: [Etiqueta]`). La unidad C: funciona correctamente.
+2. **CF-01 (Muestreo CPU Focus en 0.0%):** CPU Focus muestra `0.0%` en todos los procesos de la lista incluso tras pulsar *Refresh*; investigar el algoritmo de muestreo y cálculo de tiempo de CPU por proceso.
+3. **UI (Ajustes de Interfaz y Usabilidad):**
+   - Espaciado excesivo entre componentes visuales.
+   - Etiquetas y botones recortados por límites rígidos de contenedor.
+   - Textos inconsistentes con mezcla de inglés y español (i18n).
+   - Formateo crudo de Rust visible en la interfaz (`Some(...)`).
+   - Jitter con decimales excesivos sin redondear.
+   - Badges engañosos `"Active"` en sockets con estado `LISTEN` (deben reflejar escucha/pasivo).
+   - Indicador de versión desactualizado mostrando `v0.3.1` en lugar de `v0.4.0`.
+4. **SET-01 a SET-05 (Ajustes y Preferencias):**
+   - **SET-01:** Cambio de idioma reinicia la aplicación abruptamente; optimizar persistencia/flujo.
+   - **SET-02:** Selectores de modo oscuro y claro sin exclusión mutua estricta en UI.
+   - **SET-03:** Slider de retención de cuarentena pausado por contención de auditoría A11.09.
+   - **SET-04:** Borrado permanente directo deshabilitado forzando uso de Papelera (R10).
+   - **SET-05:** Etiqueta de versión en Ajustes desactualizada (`Version 0.1.0` en vez de `v0.4.0`).
+
+### 9.3. Observaciones y Validaciones Pendientes:
+1. **SM-02 (Uso de CPU en reposo):** Medir y verificar rigurosamente el uso sostenido de CPU y el overhead en reposo de SysPulse (< 0.5% en reposo con sondeo periódico).
+2. **PIE (Exportación forense no vacía):** La exportación forense a JSON/CSV con datos reales o descartables no vacíos aún no ha sido verificada en campo; un estado de incidentes vacío no debe interpretarse como prueba de salud comprobada del sistema.
+
+### 9.4. Mejoras Propuestas (Network Guardian):
+1. **NG-01 (Descubrimiento activo independiente de caché ARP):** El descubrimiento inicial omitió un iPhone alcanzable (`192.168.1.12`), apareciendo solo tras ejecutar `ping` en Windows y refrescar. Optimizar el descubrimiento activo sin depender únicamente de la tabla ARP del kernel.
+2. **NG-02 (Separación de estados y marcas temporales):** Separar en la UI los dispositivos conocidos de los actualmente confirmados y no confirmados/offline. No marcar offline a un dispositivo tras un único sondeo fallido; mostrar marcas de tiempo de último avistamiento (`last_seen`).
+3. **NG-03 (Alias persistentes y direcciones MAC privadas/LAA):** Soportar alias definidos por el usuario de forma persistente e identificación unívoca, contemplando direcciones MAC administradas localmente (LAA) o privadas.
+4. **NG (Recomendación Wi-Fi por banda):** Diferenciar explícitamente las recomendaciones de canales para las bandas de 2.4 GHz y 5 GHz.
+
+### 9.5. Directivas de Seguridad Permanentes:
+1. **Preservación de datos de usuario:** Preservar íntegramente los datos y archivos en cuarentena. Prohibido realizar pruebas destructivas de limpieza sobre archivos reales de usuario.
+2. **CF-02 (Restricciones de backend en CPU Focus):** Verificar y aplicar restricciones estrictas en backend que impidan elevar la prioridad de procesos críticos de Windows antes de permitir cualquier acción de Focus.
+
+### 9.6. Trabajo Diferido (Post-v0.4.0):
+1. **Process Hunter ETW:** Migración a Event Tracing for Windows (ETW) y captura en inicio temprano (early-start capture) para reemplazar el polling de `sysinfo`.
+2. **Mejoras avanzadas adicionales:** Gráficos sparkline históricos en tiempo real, notificaciones toast nativas y cambio dinámico de idioma en UI.
