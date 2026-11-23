@@ -120,7 +120,7 @@ Se registraron y verificaron formalmente las siguientes observaciones durante la
 - **SM-01 (Defecto confirmado / UI & Backend):** El volumen `D:` se rotula únicamente como `"Volume"`; debe mostrarse la letra de unidad junto a la etiqueta (ej. `D: [Etiqueta]`). La unidad `C:` funciona correctamente.
 - **SM-02 (Observación / Validación pendiente):** Verificar y medir rigurosamente el consumo sostenido de CPU y el overhead en reposo de SysPulse (< 0.5% en reposo con sondeo periódico).
 - **CF-01 (Defecto confirmado / Muestreo de CPU):** CPU Focus muestra `0.0%` de CPU para todos los procesos visibles, incluso tras pulsar *Refresh*; se requiere investigar el muestreo y cálculo de uso de CPU por proceso.
-- **CF-02 (Seguridad / Backend):** Verificar y certificar restricciones en backend contra la elevación de prioridad (*Focus*) de procesos críticos del sistema operativo Windows antes de permitir cualquier acción de usuario.
+- **CF-02 (Seguridad / Backend - IMPLEMENTADO, pendiente revisión independiente):** Implementadas restricciones en backend: rechazo estricto de PIDs críticos (<=4, self), lista canónica de procesos del sistema (`csrss`, `services`, `dwm`, etc.), verificación Win32 con `QueryFullProcessImageNameW`, protección contra reutilización de PID (`start_time_utc`) y rechazo de clases inseguras (`HIGH`/`REALTIME`). 6 pruebas unitarias específicas agregadas (119 tests totales en workspace).
 - **UI (Defectos de presentación y usabilidad):**
   - Corregir espaciado excesivo entre componentes visuales.
   - Corregir etiquetas y botones recortados por límites rígidos de contenedor.
@@ -293,7 +293,7 @@ Se registraron y verificaron formalmente las siguientes observaciones durante la
 
 ### 9.5. Directivas de Seguridad Permanentes:
 1. **Preservación de datos de usuario:** Preservar íntegramente los datos y archivos en cuarentena. Prohibido realizar pruebas destructivas de limpieza sobre archivos reales de usuario.
-2. **CF-02 (Restricciones de backend en CPU Focus):** Verificar y aplicar restricciones estrictas en backend que impidan elevar la prioridad de procesos críticos de Windows antes de permitir cualquier acción de Focus.
+2. **CF-02 (Restricciones de backend en CPU Focus - IMPLEMENTADO, pendiente revisión independiente):** Restricciones implementadas en backend contra elevación de procesos críticos, PIDs reciclados y clases inseguras (6 pruebas pasando).
 
 ### 9.6. Trabajo Diferido (Post-v0.4.0):
 1. **Process Hunter ETW:** Migración a Event Tracing for Windows (ETW) y captura en inicio temprano (early-start capture) para reemplazar el polling de `sysinfo`.

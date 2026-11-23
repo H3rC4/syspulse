@@ -250,7 +250,7 @@ flowchart TD
   - **NG (Wi-Fi):** Diferenciar explícitamente las recomendaciones de canales entre las bandas de 2.4 GHz y 5 GHz.
 - [ ] **Directivas de Seguridad Permanentes:**
   - **Preservación de Cuarentena:** Preservar íntegramente los datos y archivos de usuario en cuarentena. Prohibido ejecutar pruebas de limpieza destructivas sobre archivos reales.
-  - **CF-02:** Verificar y garantizar restricciones estrictas en backend que impidan elevar prioridad (*Focus*) a procesos críticos de Windows antes de permitir cualquier acción de usuario.
+  - [x] **CF-02 (Seguridad CPU Focus - IMPLEMENTADO, pendiente revisión independiente):** Restricciones estrictas en backend contra elevación de prioridad (*Focus*) a procesos críticos del sistema operativo Windows, validación de imagen Win32, prevención de PID reuse y rechazo de clases `HIGH`/`REALTIME`. 6 pruebas unitarias específicas añadidas (119 tests totales pasando).
 
 ---
 
