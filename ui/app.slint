@@ -371,7 +371,7 @@ component TabPill inherits Rectangle {
 component SettingRow inherits HorizontalLayout {
     in property <string> label;
     height: 44px;
-    spacing: 20px;
+    spacing: 16px;
 
     Text {
         text: label;
@@ -379,8 +379,9 @@ component SettingRow inherits HorizontalLayout {
         font-size: 13px;
         font-weight: 500;
         letter-spacing: 0.2px;
-        width: 280px;
+        width: 340px;
         vertical-alignment: center;
+        overflow: elide;
     }
 }
 
@@ -812,12 +813,12 @@ component CpuFocusTab inherits Rectangle {
 component SettingsTab inherits Rectangle {
     in-out property <int> language-index: 0;
     in-out property <bool> dark-mode: true;
-    in-out property <bool> light-mode: false;  // NUEVO
+    in-out property <bool> light-mode: false;
     in-out property <bool> start-with-os: false;
     in-out property <float> history-days: 30;
     in-out property <float> quarantine-days: 7;
-    in-out property <bool> permanent-delete: false;  // NUEVO
-    in property <string> version: "0.1.0";
+    in-out property <bool> permanent-delete: false;
+    in property <string> version: "0.4.0";
     callback save();
     callback check-updates();
 
@@ -830,8 +831,8 @@ component SettingsTab inherits Rectangle {
 
         VerticalLayout {
             spacing: 6px;
-            SectionTitle { text: "Settings"; }
-            SectionDescription { text: "Configure language, theme, and system preferences."; }
+            SectionTitle { text: language-index == 1 ? "Configuración" : "Settings"; }
+            SectionDescription { text: language-index == 1 ? "Configurá idioma, tema y preferencias del sistema." : "Configure language, theme, and system preferences."; }
         }
 
         // Settings card
@@ -849,7 +850,7 @@ component SettingsTab inherits Rectangle {
                 spacing: 4px;
 
                 SettingRow {
-                    label: "Language";
+                    label: language-index == 1 ? "Idioma" : "Language";
                     ComboBox {
                         model: ["English", "Espa\u{00F1}ol (Argentina)"];
                         current-index <=> language-index;
@@ -859,40 +860,71 @@ component SettingsTab inherits Rectangle {
                 Rectangle { height: 1px; background: Theme.border-subtle; }
 
                 SettingRow {
-                    label: "Dark mode";
-                    CheckBox { checked <=> dark-mode; }
+                    label: language-index == 1 ? "Modo oscuro" : "Dark mode";
+                    CheckBox {
+                        checked: dark-mode;
+                        toggled => {
+                            if self.checked {
+                                dark-mode = true;
+                                light-mode = false;
+                            } else {
+                                dark-mode = false;
+                                light-mode = true;
+                            }
+                        }
+                    }
                 }
 
                 Rectangle { height: 1px; background: Theme.border-subtle; }
 
                 SettingRow {
-                    label: "Light mode";
-                    CheckBox { checked <=> light-mode; }
+                    label: language-index == 1 ? "Modo claro" : "Light mode";
+                    CheckBox {
+                        checked: light-mode;
+                        toggled => {
+                            if self.checked {
+                                light-mode = true;
+                                dark-mode = false;
+                            } else {
+                                light-mode = false;
+                                dark-mode = true;
+                            }
+                        }
+                    }
                 }
 
                 Rectangle { height: 1px; background: Theme.border-subtle; }
 
                 SettingRow {
-                    label: "Start with operating system";
+                    label: language-index == 1 ? "Iniciar con el sistema operativo" : "Start with operating system";
                     CheckBox { checked <=> start-with-os; }
                 }
 
                 Rectangle { height: 1px; background: Theme.border-subtle; }
 
                 SettingRow {
-                    label: "Process history retention (days)";
-                    Slider { value <=> history-days; minimum: 1; maximum: 365; }
+                    label: (language-index == 1 ? "Retención del historial: " : "Process history retention: ") + Math.round(history-days) + (language-index == 1 ? " días" : " days");
+                    Slider {
+                        value <=> history-days;
+                        minimum: 1;
+                        maximum: 365;
+                    }
                 }
 
                 Rectangle { height: 1px; background: Theme.border-subtle; }
 
                 SettingRow {
-                    label: "Quarantine retention (days) [Paused]";
-                    Slider { value <=> quarantine-days; minimum: 1; maximum: 90; }
+                    label: (language-index == 1 ? "Retención de cuarentena: " : "Quarantine retention: ") + Math.round(quarantine-days) + (language-index == 1 ? " días [Pausada]" : " days [Paused]");
+                    Slider {
+                        value: quarantine-days;
+                        minimum: 1;
+                        maximum: 90;
+                        enabled: false;
+                    }
                 }
 
                 Text {
-                    text: "\u{2139} Auto-purge suspended for security audit. Quarantine files are preserved.";
+                    text: language-index == 1 ? "\u{2139} Purga automática suspendida por auditoría de seguridad. Los archivos en cuarentena están preservados." : "\u{2139} Auto-purge suspended for security audit. Quarantine files are preserved.";
                     color: Theme.text-secondary;
                     font-size: 11px;
                     wrap: word-wrap;
@@ -901,12 +933,12 @@ component SettingsTab inherits Rectangle {
                 Rectangle { height: 1px; background: Theme.border-subtle; }
 
                 SettingRow {
-                    label: "Permanent delete (bypass Recycle Bin) [Disabled]";
+                    label: language-index == 1 ? "Borrado permanente (sin Papelera) [Deshabilitado]" : "Permanent delete (bypass Recycle Bin) [Disabled]";
                     CheckBox { checked <=> permanent-delete; enabled: false; }
                 }
 
                 Text {
-                    text: "\u{2139} Direct permanent deletion is disabled for safety. All cleanups are sent to the Recycle Bin.";
+                    text: language-index == 1 ? "\u{2139} El borrado permanente directo está deshabilitado por seguridad. Todo envío va a la Papelera de reciclaje." : "\u{2139} Direct permanent deletion is disabled for safety. All cleanups are sent to the Recycle Bin.";
                     color: Theme.text-secondary;
                     font-size: 11px;
                     font-weight: 500;
@@ -917,12 +949,12 @@ component SettingsTab inherits Rectangle {
 
         HorizontalLayout {
             spacing: 12px;
-            NeonButton { text: "Apply & Restart"; clicked => { save(); } }
-            NeonButton { text: "Check for updates"; primary: false; clicked => { check-updates(); } }
+            NeonButton { text: language-index == 1 ? "Aplicar y Reiniciar" : "Apply & Restart"; clicked => { save(); } }
+            NeonButton { text: language-index == 1 ? "Buscar actualizaciones" : "Check for updates"; primary: false; clicked => { check-updates(); } }
         }
 
-        Text { text: "\u{26A0} App will restart to apply language change"; color: Theme.neon-orange; font-size: 11px; font-weight: 500; }
-        Text { text: "Version " + version; color: Theme.text-tertiary; font-size: 11px; }
+        Text { text: language-index == 1 ? "\u{26A0} La aplicación se reiniciará para aplicar el cambio de idioma" : "\u{26A0} App will restart to apply language change"; color: Theme.neon-orange; font-size: 11px; font-weight: 500; }
+        Text { text: (language-index == 1 ? "Versión " : "Version ") + version; color: Theme.text-tertiary; font-size: 11px; }
     }
 }
 
@@ -2963,7 +2995,7 @@ export component AppWindow inherits Window {
 
     in-out property <int> current-tab: 0;
     in property <string> status-text: "Ready";
-    in property <string> app-version: "0.1.0";
+    in property <string> app-version: "0.4.0";
     callback tab-changed(int);
 
     in property <[ProcessEventData]> process-events: [];
@@ -3217,7 +3249,7 @@ export component AppWindow inherits Window {
                 Rectangle { height: 4px; }
 
                 SidebarButton {
-                    label: "Settings";
+                    label: root.language-index == 1 ? "Configuración" : "Settings";
                     icon: "\u{2699}";
                     active: root.current-tab == 4;
                     clicked => { root.current-tab = 4; root.tab-changed(4); }

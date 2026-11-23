@@ -136,7 +136,12 @@ async fn main() -> Result<()> {
         Language::SpanishArgentina => 1,
     });
     ui.set_dark_mode(settings.dark_mode);
-    ui.set_start_with_os(settings.start_with_os);
+    ui.set_light_mode(settings.light_mode);
+
+    // Verify Windows auto-start registration matches the displayed setting (SET-05)
+    let autostart_active = Settings::is_autostart_registered().unwrap_or(settings.start_with_os);
+    ui.set_start_with_os(autostart_active);
+
     ui.set_history_days(settings.process_history_days as f32);
     ui.set_quarantine_days(settings.quarantine_days as f32);
     ui.set_permanent_delete(settings.permanent_delete);  // NUEVO
@@ -1305,11 +1310,24 @@ async fn main() -> Result<()> {
             // Build new settings from UI values
             let mut settings = current_settings.clone();
             settings.language = new_language;
-            settings.dark_mode = ui.get_dark_mode();
+
+            let is_dark = ui.get_dark_mode();
+            let is_light = ui.get_light_mode();
+            if is_light && !is_dark {
+                settings.light_mode = true;
+                settings.dark_mode = false;
+            } else {
+                settings.dark_mode = true;
+                settings.light_mode = false;
+            }
+            ui.set_dark_mode(settings.dark_mode);
+            ui.set_light_mode(settings.light_mode);
+
             settings.start_with_os = ui.get_start_with_os();
             settings.process_history_days = ui.get_history_days() as u32;
             settings.quarantine_days = ui.get_quarantine_days() as u32;
             settings.permanent_delete = ui.get_permanent_delete();  // NUEVO
+            settings.sanitize();
 
             // Save settings to disk
             if let Err(e) = settings.save() {

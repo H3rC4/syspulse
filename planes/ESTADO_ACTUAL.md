@@ -19,7 +19,7 @@ Permite recuperar el contexto de forma instantánea sin necesidad de re-auditar 
 
 | Componente | Estado | Notas Técnicas |
 |---|---|---|
-| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (113 tests unitarios pasando). |
+| **Compilación Rust** | ✅ 0 errores | Verificado con `cargo check` y `cargo test` (124 tests unitarios pasando). |
 | **System Monitor** | ✅ Completado | Desacoplado asíncronamente con Tokio (60+ FPS fluidos en Slint). Emisión de telemetría a PIE (`CpuLoad`, `MemoryPressure`, `NetworkThroughput`, `ThermalAlert`). |
 | **Smart Cleaner** | ✅ Bloques 1 a 5 completados; purga suspendida (A11.09) y cross-volume destructivo deshabilitado (A11.10) | Manifiesto v2 atómico, bloqueo entre procesos (`QuarantineProcessLock`), transacciones con staging, SHA-256, no-replace, recuperación `Staged`/`Restoring`, preservación ADS/atributos NTFS, validación de rutas/reparse, backup v1 protegido, fail-closed en duplicados y control names (R01–R03, R05, R07). Bloque 3 ejecutado: validación estricta de rutas y componentes transversales (`validate_clean_path`, A11.01), directorios protegidos (`is_protected_path`, A11.02), rechazo de reparse points y enlaces duros (`ensure_not_hard_link`, A11.03), mitigación TOCTOU en duplicados mediante verificación atómica por handle de tamaño y SHA-256 (`quarantine_file_with_expected`, A11.04 OBLIGATORIO), verificación y retención de descriptor protegido de copia retenida inalterada (`open_protected_read` y anti-colisión de identidad, A11.05), y rechazo obligatorio en backend ante selección de todas las copias de un grupo (A11.06). Bloque 4 ejecutado: diálogos de confirmación previa con conteo y bytes (`rfd::MessageDialog`, A11.13), reporte visual de errores en UI y logs (`set_cleaner_status`, A11.14), apertura segura de archivos mediante acción "Reveal" en explorador en vez de ejecución directa (A11.15), identificación unívoca por clave estable en operaciones de restauración y borrado (`entry.key`, R06), caché de tamaños escaneados y `raw-size` (R08), blindaje de directorios reales de SysPulse (`app_data_dir`, `db_path`, `logs_dir`, `settings_path`, R09) y desactivación segura de borrado permanente directo ruteando a papelera (R10). Bloque 5 ejecutado: validación integral de ciclo de vida con archivos temporales descartables (`test_b5_final_validation_lifecycle`, A11.16). A11.10 y R04 permanecen contenidos temporalmente (cross-volume destructivo deshabilitado). Semántica de Papelera en `delete_quarantine_permanently` preservada. Purga automática suspendida (A11.09 CONTENIDO TEMPORALMENTE). 47 pruebas de cleaner/cuarentena (92 totales en workspace). |
 | **CPU Focus** | ✅ Completado | Prioridad `ABOVE_NORMAL_PRIORITY_CLASS` (Win32) y memoria en MB reales. |
@@ -232,7 +232,7 @@ Se registraron y verificaron formalmente las siguientes observaciones durante la
 
 1. Leer directamente este archivo (`planes/ESTADO_ACTUAL.md`), [AGENTS.md](file:///D:/proyectos/SysPulse/AGENTS.md) y [planes/AUDITORIA_V0.4.0.md](file:///D:/proyectos/SysPulse/planes/AUDITORIA_V0.4.0.md).
 2. **Rama activa:** Mantenerse en `review/a11-block-2b` (o la rama indicada por el usuario). Baseline: `0dcc5b3`.
-3. **Estado del proyecto:** **113 tests unitarios pasando** (0 fallos, 0 errores en `cargo check`).
+3. **Estado del proyecto:** **124 tests unitarios pasando** (0 fallos, 0 errores en `cargo check`).
 4. **Fix P0 Implementado (Smart Cleaner / Startup Blocker):**
    - Detección de manifiestos v1 sobredimensionados (`MAX_MIGRATABLE_V1_ENTRIES = 1000`, `MAX_MIGRATABLE_V1_BYTES = 1024 * 1024`).
    - Omisión de la migración automática y transición a modo degradado en < 1 ms para evitar el bloqueo del hilo principal de Slint.
@@ -274,12 +274,13 @@ Se registraron y verificaron formalmente las siguientes observaciones durante la
    - Jitter con decimales excesivos sin redondear.
    - Badges engañosos `"Active"` en sockets con estado `LISTEN` (deben reflejar escucha/pasivo).
    - Indicador de versión desactualizado mostrando `v0.3.1` en lugar de `v0.4.0`.
-4. **SET-01 a SET-05 (Ajustes y Preferencias):**
-   - **SET-01:** Cambio de idioma reinicia la aplicación abruptamente; optimizar persistencia/flujo.
-   - **SET-02:** Selectores de modo oscuro y claro sin exclusión mutua estricta en UI.
-   - **SET-03:** Slider de retención de cuarentena pausado por contención de auditoría A11.09.
-   - **SET-04:** Borrado permanente directo deshabilitado forzando uso de Papelera (R10).
-   - **SET-05:** Etiqueta de versión en Ajustes desactualizada (`Version 0.1.0` en vez de `v0.4.0`).
+4. **SET-01 a SET-05 (Ajustes y Preferencias - IMPLEMENTADOS, pendiente verificación GUI en campo):**
+   - **SET-01 (Modo Oscuro/Claro):** Exclusión mutua estricta en UI, inicialización y persistencia garantizadas tras reinicio (`sanitize()`).
+   - **SET-02 (Soporte Bilingüe es-AR/en):** Integración reactiva en Slint y Fluent de textos en español rioplatense e inglés conservados.
+   - **SET-03 (Sliders de Retención):** Sliders visualizan valores numéricos en días; slider de cuarentena deshabilitado/bloqueado por A11.09.
+   - **SET-04 (Etiquetas y Controles):** Ancho ampliado a 340px con elisión preventiva; versión actualizada a 0.4.0 en Ajustes y ventana principal.
+   - **SET-05 (Inicio con Windows):** Consulta no destructiva del Registro Win32 (`is_autostart_registered()`) sincronizando estado real sin alteraciones automáticas.
+   - 5 pruebas unitarias en `modules::config::tests` (124 tests totales en workspace).
 
 ### 9.3. Observaciones y Validaciones Pendientes:
 1. **SM-02 (Uso de CPU en reposo):** Medir y verificar rigurosamente el uso sostenido de CPU y el overhead en reposo de SysPulse (< 0.5% en reposo con sondeo periódico).
